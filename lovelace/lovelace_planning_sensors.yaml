@@ -42,7 +42,7 @@ cards:
     title: Peak-hantering
     show_header_toggle: false
     entities:
-      - entity: sensor.gen24_peak_limit_active_kw
+      - entity: sensor.gen24_peak_limit_active
         name: Aktivt peak-limit (kW)
         icon: mdi:transmission-tower
       
@@ -80,8 +80,24 @@ cards:
     content: |
       ### Status-check
       
-      **PEAK_SHAVE guard:** {{ 'Aktiv ✅' if states('sensor.gen24_peak_limit_active_kw') not in ['0.0', '0', 'unavailable', 'unknown'] else 'Död ⚠️ (peak_limit = 0)' }}
+      _En guard är "evaluerbar" när dess sensor finns och ger ett tal.
+      Ett giltigt 0-score (t.ex. export nattetid) är EJ samma som död sensor._
       
-      **EXPORT guard:** {{ 'Aktiv ✅' if states('sensor.gen24_export_value_now') not in ['0.0', '0', 'unavailable', 'unknown'] else 'Död ⚠️ (export_value = 0)' }}
+      **PEAK_SHAVE guard:**
+      {%- set p = states('sensor.gen24_peak_limit_active') %}
+      {%- if p in ['unavailable', 'unknown', 'none', 'None', ''] %} Död ⚠️ (sensor saknas)
+      {%- elif p | float(0) > 0 %} Evaluerbar ✅ (peak_limit = {{ p }} kW)
+      {%- else %} Inaktiv ⚠️ (peak_limit = 0 — kontrollera input_number.gen24_peak_limit_day_kw/night_kw)
+      {%- endif %}
       
-      **Forecast-beroende guards:** {{ 'Evaluerbara ✅' if states('sensor.gen24_forecast_remaining_kwh') not in ['-1', 'unavailable', 'unknown'] else 'Inaktiva ⚠️ (forecast = -1)' }}
+      **EXPORT guard:**
+      {%- set e = states('sensor.gen24_export_value_now') %}
+      {%- if e in ['unavailable', 'unknown', 'none', 'None', ''] %} Död ⚠️ (sensor saknas)
+      {%- else %} Evaluerbar ✅ (export_value = {{ e }}{{ ' — lågt/0 är normalt nattetid' if e | float(0) == 0 else '' }})
+      {%- endif %}
+      
+      **Forecast-beroende guards:**
+      {%- set f = states('sensor.gen24_forecast_remaining_kwh') %}
+      {%- if f in ['-1', 'unavailable', 'unknown', 'none', 'None', ''] %} Inaktiva ⚠️ (forecast = {{ f }} — kontrollera MQTT-bryggan)
+      {%- else %} Evaluerbara ✅ (remaining = {{ f }} kWh)
+      {%- endif %}

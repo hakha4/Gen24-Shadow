@@ -101,7 +101,7 @@ input_number:
 
   gen24_peak_margin_kw:
     # Marginal (kW) under peak-gränsen för PEAK_SHAVE-läget.
-    # OBS: PEAK_SHAVE-guardet kräver sensor.gen24_peak_limit_active_kw
+    # OBS: PEAK_SHAVE-guardet kräver sensor.gen24_peak_limit_active
     # som inte är implementerad i shadow Fas 1 → guardet är alltid inaktivt.
     name: "GEN24 Peak-marginal (kW)"
     icon: mdi:chart-bell-curve-cumulative

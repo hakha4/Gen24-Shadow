@@ -132,7 +132,7 @@ template:
           {% set min_reserve = states('input_number.gen24_load_window_min_reserve_soc') | float(20) %}
           {% set max_reserve = states('input_number.gen24_load_window_max_reserve_soc') | float(65) %}
           {% set sched_risk = states('sensor.gen24_scheduled_load_risk') | float(0) %}
-          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active') | float(0) %}
           {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
           {% set reserve = min_reserve %}
 
@@ -272,7 +272,7 @@ template:
           {% set cheap = states('input_number.gen24_price_cheap_threshold_sek') | float(0) %}
           {% set expensive = states('input_number.gen24_price_expensive_threshold_sek') | float(999) %}
           {% set forecast_score = states('input_number.gen24_solar_forecast_score') | float(50) %}
-          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active') | float(0) %}
           {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
           {% set export_min_soc = states('input_number.gen24_exportmode_min_soc_force_export') | float(65) %}
           {% set night_ev = is_state('input_boolean.gen24_night_ev_peak_mode', 'on') %}
@@ -468,7 +468,7 @@ template:
           {% set expensive = states('input_number.gen24_price_expensive_threshold_sek') | float(999) %}
           {% set cheap = states('input_number.gen24_price_cheap_threshold_sek') | float(0) %}
           {% set forecast_score = states('input_number.gen24_solar_forecast_score') | float(50) %}
-          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active') | float(0) %}
           {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
           {% set cmd = states('input_text.gen24_last_battery_command') | lower %}
 

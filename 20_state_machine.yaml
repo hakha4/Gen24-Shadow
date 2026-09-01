@@ -119,7 +119,7 @@ template:
             {% else %}
               {% set ns = namespace(candidates=[]) %}
               {# --- PEAK_SHAVE (80) --- #}
-              {% set limit_kw = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+              {% set limit_kw = states('sensor.gen24_peak_limit_active') | float(0) %}
               {% set margin_kw = states('input_number.gen24_peak_margin_kw') | float(0.30) %}
               {% set soc_min = states('input_number.gen24_soc_min_safe') | float(15) %}
               {% set grid_import_kw = (grid | float(0)) / 1000 %}
@@ -302,7 +302,7 @@ template:
             {% set input = 'sensor.gen24_state_input' %}
             {% set soc = state_attr(input, 'soc_pct') | default(0) | float %}
             {% set grid = state_attr(input, 'grid_w') | default(0) | float %}
-            {% set limit_kw = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+            {% set limit_kw = states('sensor.gen24_peak_limit_active') | float(0) %}
             {% set margin_kw = states('input_number.gen24_peak_margin_kw') | float(0.30) %}
             {% set soc_min = states('input_number.gen24_soc_min_safe') | float(15) %}
             {% set grid_import_kw = (grid | float(0)) / 1000 %}
