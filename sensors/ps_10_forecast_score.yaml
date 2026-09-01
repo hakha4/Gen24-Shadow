@@ -1,0 +1,77 @@
+# =============================================================================
+# ps_10_forecast_score.yaml
+# =============================================================================
+# BERÄKNAD sensor: Gen24 Solar Forecast Score (0-100)
+# 
+# Portad från .161 ps_10_sensors_varia_v9.yaml.
+# 
+# Används av daytidsguards (DAYTIME_SMART, SELF_CONS_DAY, EXPORT) för att
+# avgöra hur aggressivt systemet ska ladda baserat på solprognosen.
+#
+# Beräknas LOKALT från forecast-bryggans sensorer:
+#   - gen24_forecast_remaining_kwh (från .161 via MQTT)
+#   - gen24_forecast_next_hour_kwh (från .161 via MQTT)
+#   - gen24_forecast_tomorrow_kwh (från .161 via MQTT)
+#   - gen24_solar_pv_power (runtime från shadow firmware)
+#
+# Poängsystem:
+#   - Återstående energi idag: 0-40p
+#   - Nästa timme: 0-30p
+#   - Aktuell produktion: 0-20p
+#   - Prognos imorgon: 0-10p
+#   Max: 100p
+#
+# READ-ONLY: beräknar bara, agerar inte.
+# =============================================================================
+
+template:
+  - sensor:
+      # ======================================================================
+      # GEN24 SOLAR FORECAST SCORE
+      # ======================================================================
+      - name: "GEN24 Solar Forecast Raw Score"
+        unique_id: gen24_solar_forecast_score
+        icon: mdi:weather-sunny-alert
+        unit_of_measurement: ""
+        
+        state: >
+          {% set remaining = states('sensor.gen24_forecast_remaining_kwh') | float(0) %}
+          {% set next_hour = states('sensor.gen24_forecast_next_hour_kwh') | float(0) %}
+          {% set current_w = states('sensor.gen24_solar_pv_power') | float(0) %}
+          {% set tomorrow = states('sensor.gen24_forecast_tomorrow_kwh') | float(0) %}
+          {% set low_threshold = states('input_number.gen24_forecast_low_kwh') | float(3.0) %}
+          {% set score = 0 %}
+          {# Poäng för återstående energi idag #}
+          {% if remaining > low_threshold * 2 %}{% set score = score + 40 %}
+          {% elif remaining > low_threshold %}{% set score = score + 20 %}
+          {% else %}{% set score = score + 0 %}{% endif %}
+          {# Poäng för nästa timme #}
+          {% if next_hour > 0.5 %}{% set score = score + 30 %}
+          {% elif next_hour > 0.2 %}{% set score = score + 15 %}
+          {% else %}{% set score = score + 0 %}{% endif %}
+          {# Poäng för aktuell produktion #}
+          {% if current_w > 500 %}{% set score = score + 20 %}
+          {% elif current_w > 100 %}{% set score = score + 10 %}
+          {% else %}{% set score = score + 0 %}{% endif %}
+          {# Poäng för imorgon #}
+          {% if tomorrow > 10 %}{% set score = score + 10 %}
+          {% elif tomorrow > 5 %}{% set score = score + 5 %}
+          {% else %}{% set score = score + 0 %}{% endif %}
+          {{ score }}
+        
+        attributes:
+          forecast_source: "MQTT Bridge (.161)"
+          remaining_today_kwh: "{{ states('sensor.gen24_forecast_remaining_kwh') | float(0) }}"
+          next_hour_kwh: "{{ states('sensor.gen24_forecast_next_hour_kwh') | float(0) }}"
+          current_production_w: "{{ states('sensor.gen24_solar_pv_power') | float(0) }}"
+          tomorrow_kwh: "{{ states('sensor.gen24_forecast_tomorrow_kwh') | float(0) }}"
+          forecast_level: >
+            {% set score = this.state | int(0) %}
+            {% if score >= 60 %}high
+            {% elif score >= 30 %}medium
+            {% else %}low{% endif %}
+          description: >
+            {% set score = this.state | int(0) %}
+            {% if score >= 60 %}☀️ Bra solprognos - vänta på solenergi
+            {% elif score >= 30 %}🌤️ Medel solprognos - viss nätladdning OK
+            {% else %}☁️ Låg solprognos - aggressiv nätladdning rekommenderas{% endif %}

@@ -134,6 +134,18 @@ input_number:
     mode: slider
     initial: 1.5
 
+  gen24_forecast_low_kwh:
+    # Låg prognoströskel för solar_forecast_score-beräkning.
+    # Används av ps_10_forecast_score.yaml (beräknad sensor).
+    name: "GEN24 Solar forecast low threshold (kWh remaining)"
+    icon: mdi:solar-power-variant
+    min: 0.5
+    max: 15.0
+    step: 0.5
+    unit_of_measurement: "kWh"
+    mode: box
+    initial: 3.0
+
   # PLANERINGSSENSORER — indata som krävs av ps_20_planning_sensors.yaml
   # (peak_limit_active_kw, scheduled_load_risk, peak_reserve_soc, m.fl.)
   # Defaults hämtade från produktion .161 (00_config.yaml).

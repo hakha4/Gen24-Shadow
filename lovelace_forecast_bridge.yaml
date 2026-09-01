@@ -13,7 +13,7 @@ cards:
       Live prognos från produktion via MQTT.
 
   - type: entities
-    title: Forecast-sensorer
+    title: Forecast-sensorer (MQTT från .161)
     show_header_toggle: false
     entities:
       - entity: sensor.gen24_forecast_remaining_kwh
@@ -27,10 +27,14 @@ cards:
       - entity: sensor.gen24_forecast_next_hour_kwh
         name: Nästa timme (kWh)
         icon: mdi:clock-outline
-      
-      - entity: sensor.gen24_solar_forecast_score
-        name: Forecast Score
-        icon: mdi:percent
+
+  - type: entities
+    title: Beräknade forecast-sensorer (lokalt)
+    show_header_toggle: false
+    entities:
+      - entity: sensor.gen24_solar_forecast_raw_score
+        name: Forecast Score (0-100)
+        icon: mdi:weather-sunny-alert
 
   - type: markdown
     content: |

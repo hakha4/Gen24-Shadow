@@ -40,12 +40,11 @@
 #           topic: "gen24_shadow/forecast/next_hour_kwh"
 #           retain: true
 #           payload: "{{ states('sensor.gen24_forecast_next_hour_kwh') }}"
-#       - service: mqtt.publish
-#         data:
-#           topic: "gen24_shadow/forecast/solar_forecast_score"
-#           retain: true
-#           payload: "{{ states('sensor.gen24_solar_forecast_score') }}"
 # -----------------------------------------------------------------------------
+#
+# OBS: sensor.gen24_solar_forecast_score publiceras INTE — den beräknas lokalt
+# på .123 i ps_10_forecast_score.yaml från de tre forecast-värdena ovan +
+# gen24_solar_pv_power (runtime-sensor från shadow firmware).
 #
 # AVVECKLING: när testfasen är klar, avaktivera .161-automationen. Sensorerna
 # nedan blir då "unavailable" och forecast-beroende logik faller tillbaka på
@@ -91,17 +90,5 @@ mqtt:
           {{ value | float(0) | round(3) }}
         {% else %}
           0
-        {% endif %}
-      expire_after: 1800
-
-    - name: "GEN24 Solar Forecast Raw Score"
-      unique_id: gen24_solar_forecast_score
-      state_topic: "gen24_shadow/forecast/solar_forecast_score"
-      icon: mdi:weather-sunny-alert
-      value_template: >-
-        {% if value not in ['', 'unknown', 'unavailable', 'none', 'None'] %}
-          {{ value | int(-1) }}
-        {% else %}
-          -1
         {% endif %}
       expire_after: 1800
