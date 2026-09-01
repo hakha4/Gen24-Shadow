@@ -1,0 +1,281 @@
+﻿# =============================================================================
+# 20_state_machine.yaml  â€”  read-only state machine, fas 1
+# =============================================================================
+# Innehaller:
+#   - sensor.gen24_state_input                (normaliserad snapshot)
+#   - sensor.gen24_state_decision             (EN beslutsfattare)
+#   - sensor.gen24_state_transition_log       (lista over senaste vaxlingar)
+#   - sensor.gen24_control_hub                (debug/overvakning)
+#
+# Allt ar READ-ONLY. Inga MQTT-kommandon skickas.
+#
+# Guardar (harda):
+#   - data_quality maste vara COHERENT
+#   - snapshot_age_ms maste vara < 10 000
+#   - sensor.gen24_shadow_status maste vara OK
+# Om nagot misslyckas -> DATA_QUALITY_REJECT (action=BLOCK).
+# =============================================================================
+
+template:
+  - trigger:
+      - platform: state
+        entity_id: sensor.gen24_shadow_decision_sample
+        not_to:
+          - "unavailable"
+          - "unknown"
+      - platform: state
+        entity_id: sensor.gen24_shadow_control_mode_live
+        not_to:
+          - "unavailable"
+          - "unknown"
+      - platform: time_pattern
+        minutes: "/1"
+    sensor:
+      - name: "GEN24 State Input"
+        unique_id: gen24_state_input
+        icon: mdi:database
+        state: >-
+          {% set dq = state_attr('sensor.gen24_shadow_decision_sample', 'data_quality') | default('unknown') %}
+          {{ dq | upper }}
+        attributes:
+          data_quality: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'data_quality') | default('unknown') }}
+          firmware_timestamp: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'firmware_timestamp') | default('unknown') }}
+          snapshot_age_ms: >-
+            {% set ts = state_attr('sensor.gen24_shadow_decision_sample', 'firmware_timestamp') %}
+            {% if ts is not none and ts != 'unknown' and ts != '' and as_timestamp(ts) is not none %}
+              {{ ((now().timestamp() - as_timestamp(ts)) * 1000) | int }}
+            {% else %}
+              99999
+            {% endif %}
+          control_mode: >-
+            {% set live = states('sensor.gen24_shadow_control_mode_live') %}
+            {% if live not in ['unknown','unavailable','none',''] %}
+              {{ live }}
+            {% else %}
+              {{ state_attr('sensor.gen24_shadow_decision_sample', 'control_mode') | default('AUTO') }}
+            {% endif %}
+          soc_pct: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'soc_pct') %}
+            {{ raw | float if raw is not none else 0 }}
+          pv_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'pv_w') %}
+            {{ raw | float if raw is not none else 0 }}
+          grid_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'grid_w') %}
+            {{ raw | float if raw is not none else 0 }}
+          load_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'load_w') %}
+            {{ raw | float if raw is not none else 0 }}
+          battery_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'battery_w') %}
+            {{ raw | float if raw is not none else 0 }}
+          raw_load_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'raw_load_w') %}
+            {{ raw | float if raw is not none else 0 }}
+          load_source_mode: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'load_source_mode') | default('unknown') }}
+          observed_action: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'observed_action') | default('IDLE') }}
+          residual_w: >-
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'power_balance_residual_w') %}
+            {{ raw | float if raw is not none else 99999 }}
+          shadow_status: >-
+            {{ states('sensor.gen24_shadow_status') | default('UNKNOWN') }}
+
+  - sensor:
+      - name: "GEN24 State Decision"
+        unique_id: gen24_state_decision
+        icon: mdi:state-machine
+        state: >-
+          {% set input = 'sensor.gen24_state_input' %}
+          {% set dq = state_attr(input, 'data_quality') | default('unknown') %}
+          {% set age = state_attr(input, 'snapshot_age_ms') | default(99999) | int %}
+          {% set shadow = state_attr(input, 'shadow_status') | default('UNKNOWN') %}
+          {% if dq != 'COHERENT' or age >= 10000 or shadow not in ['OK'] %}
+            DATA_QUALITY_REJECT
+          {% else %}
+            {% set mode = state_attr(input, 'control_mode') | default('AUTO') %}
+            {% if mode == 'MANUAL' %}
+              MANUAL
+            {% elif mode == 'AUTO' %}
+              AUTO
+            {% else %}
+              {% set battery = state_attr(input, 'battery_w') | default(0) | float %}
+              {% set grid = state_attr(input, 'grid_w') | default(0) | float %}
+              {% if battery <= -100 %}
+                SOLAR_CHARGE
+              {% elif battery >= 100 %}
+                {% if grid < -500 %}
+                  EXPORT
+                {% else %}
+                  SELF_CONS_DAY
+                {% endif %}
+              {% else %}
+                IDLE
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        attributes:
+          action: >-
+            {% if this.state == 'DATA_QUALITY_REJECT' %}BLOCK
+            {% elif this.state in ['AUTO','MANUAL'] %}IDLE
+            {% elif this.state in ['SOLAR_CHARGE','NIGHT_BATTERY','CHARGE_CHEAP','DAYTIME_SMART'] %}CHARGE
+            {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE'] %}DISCHARGE
+            {% else %}IDLE{% endif %}
+          power_w: >-
+            {% set battery = state_attr('sensor.gen24_state_input', 'battery_w') | default(0) | float %}
+            {% if this.state in ['SOLAR_CHARGE','NIGHT_BATTERY','CHARGE_CHEAP','DAYTIME_SMART'] %}{{ (-battery) | abs | int }}
+            {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE'] %}{{ battery | int }}
+            {% else %}0{% endif %}
+          priority: >-
+            {% set priorities = {
+              'DATA_QUALITY_REJECT': 99,
+              'MANUAL': 90,
+              'PEAK_SHAVE': 80,
+              'EXPORT': 75,
+              'SELF_CONS_DAY': 72,
+              'SELF_CONS_NIGHT': 65,
+              'NIGHT_BATTERY': 70,
+              'SOLAR_CHARGE': 65,
+              'CHARGE_CHEAP': 60,
+              'DAYTIME_SMART': 60,
+              'AUTO': 10,
+              'IDLE': 0
+            } %}
+            {{ priorities.get(this.state, 0) }}
+          reason: >-
+            {% set reasons = {
+              'DATA_QUALITY_REJECT': 'data_quality_or_stale_or_shadow_not_ok',
+              'MANUAL': 'control_mode_manual',
+              'PEAK_SHAVE': 'peak_shave_guard_not_implemented',
+              'EXPORT': 'export_guard_not_implemented',
+              'SELF_CONS_DAY': 'self_consumption_day_discharge',
+              'SELF_CONS_NIGHT': 'self_consumption_night_guard_not_implemented',
+              'NIGHT_BATTERY': 'night_battery_guard_not_implemented',
+              'SOLAR_CHARGE': 'pv_surplus_charge',
+              'CHARGE_CHEAP': 'charge_cheap_guard_not_implemented',
+              'DAYTIME_SMART': 'daytime_smart_guard_not_implemented',
+              'AUTO': 'control_mode_auto',
+              'IDLE': 'no_active_state'
+            } %}
+            {{ reasons.get(this.state, 'unknown') }}
+          guard: >-
+            {{ this.state != 'DATA_QUALITY_REJECT' }}
+          is_safe_to_act: >-
+            {% set input = 'sensor.gen24_state_input' %}
+            {% set dq = state_attr(input, 'data_quality') | default('unknown') %}
+            {% set age = state_attr(input, 'snapshot_age_ms') | default(99999) | int %}
+            {% set shadow = state_attr(input, 'shadow_status') | default('UNKNOWN') %}
+            {{ dq == 'COHERENT' and age < 10000 and shadow in ['OK'] }}
+          input_data_quality: >-
+            {{ state_attr('sensor.gen24_state_input', 'data_quality') }}
+          input_snapshot_age_ms: >-
+            {{ state_attr('sensor.gen24_state_input', 'snapshot_age_ms') }}
+          input_control_mode: >-
+            {{ state_attr('sensor.gen24_state_input', 'control_mode') }}
+          input_battery_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'battery_w') }}
+          input_grid_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'grid_w') }}
+
+  - sensor:
+      - name: "GEN24 Control Hub"
+        unique_id: gen24_control_hub
+        icon: mdi:chart-box-outline
+        state: >-
+          {% set safe = state_attr('sensor.gen24_state_decision', 'is_safe_to_act') %}
+          {% if safe != true %}
+            GUARD
+          {% else %}
+            {{ states('sensor.gen24_state_decision') }}
+          {% endif %}
+        attributes:
+          shadow_status: >-
+            {{ states('sensor.gen24_shadow_status') }}
+          data_quality: >-
+            {{ state_attr('sensor.gen24_state_input', 'data_quality') }}
+          snapshot_age_ms: >-
+            {{ state_attr('sensor.gen24_state_input', 'snapshot_age_ms') }}
+          is_data_fresh: >-
+            {{ (state_attr('sensor.gen24_state_input', 'snapshot_age_ms') | default(99999) | int) < 10000 }}
+          is_data_coherent: >-
+            {{ (state_attr('sensor.gen24_state_input', 'data_quality') | default('')) == 'COHERENT' }}
+          is_shadow_ok: >-
+            {{ states('sensor.gen24_shadow_status') in ['OK'] }}
+          is_safe_to_act: >-
+            {{ state_attr('sensor.gen24_state_decision', 'is_safe_to_act') }}
+          control_mode: >-
+            {{ state_attr('sensor.gen24_state_input', 'control_mode') }}
+          soc_pct: >-
+            {{ state_attr('sensor.gen24_state_input', 'soc_pct') }}
+          pv_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'pv_w') }}
+          grid_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'grid_w') }}
+          load_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'load_w') }}
+          battery_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'battery_w') }}
+          observed_action: >-
+            {{ state_attr('sensor.gen24_state_input', 'observed_action') }}
+          residual_w: >-
+            {{ state_attr('sensor.gen24_state_input', 'residual_w') }}
+          state_decision: >-
+            {{ states('sensor.gen24_state_decision') }}
+          state_action: >-
+            {{ state_attr('sensor.gen24_state_decision', 'action') }}
+          state_power_w: >-
+            {{ state_attr('sensor.gen24_state_decision', 'power_w') }}
+          state_priority: >-
+            {{ state_attr('sensor.gen24_state_decision', 'priority') }}
+          state_reason: >-
+            {{ state_attr('sensor.gen24_state_decision', 'reason') }}
+          transition_log: >-
+            {{ state_attr('sensor.gen24_state_transition_log', 'history') | default('') }}
+
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.gen24_state_decision
+        not_from:
+          - "unavailable"
+          - "unknown"
+        not_to:
+          - "unavailable"
+          - "unknown"
+    sensor:
+      - name: "GEN24 State Transition Log"
+        unique_id: gen24_state_transition_log
+        icon: mdi:timeline-text
+        state: >-
+          {% if trigger is defined and trigger.to_state is defined %}
+            {{ trigger.to_state.state }}
+          {% else %}
+            none
+          {% endif %}
+        attributes:
+          last_entry: >-
+            {% if trigger is defined and trigger.from_state is defined and trigger.to_state is defined %}
+              {{ now().strftime('%H:%M:%S') }}  {{ trigger.from_state.state }} -> {{ trigger.to_state.state }}  ({{ state_attr('sensor.gen24_state_decision','reason') | default('') }})
+            {% else %}
+              none
+            {% endif %}
+          history: >-
+            {% if trigger is defined and trigger.from_state is defined and trigger.to_state is defined and trigger.from_state.state != trigger.to_state.state %}
+              {% set prev = state_attr('sensor.gen24_state_transition_log', 'history') | default('', true) %}
+              {% set r = (state_attr('sensor.gen24_state_decision','reason') | default(''))[:20] %}
+              {% set line = now().strftime('%H:%M:%S') ~ ' ' ~ trigger.from_state.state[:10] ~ '>' ~ trigger.to_state.state[:10] ~ ' ' ~ r %}
+              {% set combined = (line ~ '\n' ~ prev) %}
+              {{ combined[:400] }}
+            {% else %}
+              {{ state_attr('sensor.gen24_state_transition_log', 'history') | default('', true) }}
+            {% endif %}
+          count: >-
+            {% if trigger is defined and trigger.from_state is defined and trigger.to_state is defined and trigger.from_state.state != trigger.to_state.state %}
+              {% set prev = state_attr('sensor.gen24_state_transition_log', 'count') | int(0) %}
+              {{ prev + 1 }}
+            {% else %}
+              {{ state_attr('sensor.gen24_state_transition_log', 'count') | int(0) }}
+            {% endif %}

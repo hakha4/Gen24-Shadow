@@ -1,0 +1,35 @@
+mqtt:
+  sensor:
+    - name: "GEN24 Shadow Summary"
+      unique_id: gen24_shadow_summary
+      state_topic: "gen24_shadow/shadow/decision"
+      value_template: >-
+        {% set outcome = value_json.outcome | default('UNKNOWN') %}
+        {% set action = value_json.effective_action | default('UNKNOWN') %}
+        {% set power = value_json.effective_w | default(0) | int(0) %}
+        {{ outcome ~ ' · ' ~ action ~ ' · ' ~ power ~ ' W' }}
+      json_attributes_topic: "gen24_shadow/shadow/decision"
+      availability_topic: "gen24_shadow/conn_status"
+      payload_available: "Online"
+      payload_not_available: "Offline"
+      icon: mdi:state-machine
+      device:
+        identifiers:
+          - gen24_shadow_firmware
+        name: "GEN24 Shadow Firmware"
+        manufacturer: "Custom"
+        model: "ESP32 GEN24 Shadow"
+
+    - name: "GEN24 Shadow Control Mode Live"
+      unique_id: gen24_shadow_control_mode_live
+      state_topic: "gen24_shadow/sensor/control_mode"
+      availability_topic: "gen24_shadow/conn_status"
+      payload_available: "Online"
+      payload_not_available: "Offline"
+      icon: mdi:tune-variant
+      device:
+        identifiers:
+          - gen24_shadow_firmware
+        name: "GEN24 Shadow Firmware"
+        manufacturer: "Custom"
+        model: "ESP32 GEN24 Shadow"

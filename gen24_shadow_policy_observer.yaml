@@ -1,0 +1,61 @@
+# GEN24 shadow policy - step 1
+# Observation only. No scripts, automations or command topics are defined here.
+template:
+  - trigger:
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/soc"
+        id: soc
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/solar_pv_w"
+        id: pv
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/solar_grid_w"
+        id: grid
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/solar_load_w"
+        id: load
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/solar_battery_w"
+        id: battery
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/control_mode"
+        id: control_mode
+      - platform: time_pattern
+        minutes: "/1"
+        id: clock
+    sensor:
+      - name: "GEN24 Shadow Policy Observer"
+        unique_id: gen24_shadow_policy_observer
+        icon: mdi:shield-search
+        state: >-
+          {% set soc = trigger.payload if trigger.id == 'soc' else this.attributes.get('soc_pct') %}
+          {% set pv = trigger.payload if trigger.id == 'pv' else this.attributes.get('pv_w') %}
+          {% set grid = trigger.payload if trigger.id == 'grid' else this.attributes.get('grid_w') %}
+          {% set load = trigger.payload if trigger.id == 'load' else this.attributes.get('load_w') %}
+          {% set battery = trigger.payload if trigger.id == 'battery' else this.attributes.get('battery_w') %}
+          {% set mode = trigger.payload if trigger.id == 'control_mode' else this.attributes.get('control_mode_live') %}
+          {% if soc is none or pv is none or grid is none or load is none or battery is none or mode is none %}
+            WAITING_FOR_DATA
+          {% else %}
+            OBSERVING
+          {% endif %}
+        attributes:
+          policy_stage: "1_OBSERVATION_ONLY"
+          suggested_action: "NOT_EVALUATED"
+          suggested_w: 0
+          commands_enabled: false
+          command_topics_used: false
+          soc_pct: >-
+            {{ trigger.payload | float if trigger.id == 'soc' else this.attributes.get('soc_pct') }}
+          pv_w: >-
+            {{ trigger.payload | float if trigger.id == 'pv' else this.attributes.get('pv_w') }}
+          grid_w: >-
+            {{ trigger.payload | float if trigger.id == 'grid' else this.attributes.get('grid_w') }}
+          load_w: >-
+            {{ trigger.payload | float if trigger.id == 'load' else this.attributes.get('load_w') }}
+          battery_w: >-
+            {{ trigger.payload | float if trigger.id == 'battery' else this.attributes.get('battery_w') }}
+          control_mode_live: >-
+            {{ trigger.payload | trim if trigger.id == 'control_mode' else this.attributes.get('control_mode_live') }}
+          last_source: "{{ trigger.id }}"
+          last_sample_at: "{{ now().isoformat() }}"

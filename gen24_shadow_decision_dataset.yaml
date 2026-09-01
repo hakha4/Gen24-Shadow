@@ -1,0 +1,118 @@
+# GEN24 shadow decision dataset - steg 2
+# Read-only: publicerar inga MQTT-kommandon och anropar inga styrtjanster.
+# Ett prov skapas fran ett atomiskt JSON-meddelande fran firmware. Alla
+# effektvarden i provet kommer darfor fran exakt samma publiceringscykel.
+
+mqtt:
+  sensor:
+    - name: "GEN24 Shadow Raw Load"
+      unique_id: gen24_shadow_raw_load
+      state_topic: "gen24_shadow/sensor/solar_load_raw_w"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      icon: mdi:home-lightning-bolt-outline
+
+    - name: "GEN24 Shadow Load Source Mode"
+      unique_id: gen24_shadow_load_source_mode
+      state_topic: "gen24_shadow/sensor/solar_load_source_mode"
+      icon: mdi:source-branch
+
+template:
+  - trigger:
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/shadow_decision_frame"
+        id: firmware_sample
+    sensor:
+      - name: "GEN24 Shadow Decision Sample"
+        unique_id: gen24_shadow_decision_sample
+        icon: mdi:database-clock
+        availability: >-
+          {{ trigger.payload_json.valid | default(false) }}
+        state: "{{ now().isoformat() }}"
+        attributes:
+          collection_stage: "2_DECISION_DATA_COLLECTION"
+          commands_enabled: false
+          command_topics_used: false
+          sample_schema: "{{ trigger.payload_json.schema | default(0) }}"
+          firmware_timestamp: "{{ trigger.payload_json.firmware_timestamp | default('unknown') }}"
+          collected_at: "{{ now().isoformat() }}"
+          control_mode: >-
+            {{ state_attr('sensor.gen24_shadow_policy_observer', 'control_mode_live') | default('unknown', true) }}
+          soc_pct: >-
+            {{ trigger.payload_json.soc_pct }}
+          pv_w: >-
+            {{ trigger.payload_json.pv_w }}
+          grid_w: >-
+            {{ trigger.payload_json.grid_w }}
+          load_w: >-
+            {{ trigger.payload_json.load_w }}
+          raw_load_w: >-
+            {{ trigger.payload_json.raw_load_w }}
+          load_source_mode: >-
+            {{ trigger.payload_json.load_source_mode }}
+          raw_to_combined_delta_w: >-
+            {% set load = trigger.payload_json.load_w | float %}
+            {% set raw = trigger.payload_json.raw_load_w | float %}
+            {{ (load - raw) | round(1) }}
+          battery_w: >-
+            {{ trigger.payload_json.battery_w }}
+          observed_action: >-
+            {% set battery = trigger.payload_json.battery_w | float %}
+            {% if battery <= -100 %}CHARGING
+            {% elif battery >= 100 %}DISCHARGING
+            {% else %}IDLE{% endif %}
+          # Fronius-konvention i firmware: grid > 0 import, battery > 0
+          # urladdning och battery < 0 laddning. Idealt galler da
+          # load = pv + grid + battery. Residualen ar diagnostik, inte styrning.
+          power_balance_residual_w: >-
+            {% set pv = trigger.payload_json.pv_w | float %}
+            {% set grid = trigger.payload_json.grid_w | float %}
+            {% set load = trigger.payload_json.load_w | float %}
+            {% set battery = trigger.payload_json.battery_w | float %}
+            {{ (load - pv - grid - battery) | round(1) }}
+          data_quality: >-
+            {% if not (trigger.payload_json.valid | default(false)) %}
+              INVALID
+            {% else %}
+              {% set pv = trigger.payload_json.pv_w | float %}
+              {% set grid = trigger.payload_json.grid_w | float %}
+              {% set load = trigger.payload_json.load_w | float %}
+              {% set battery = trigger.payload_json.battery_w | float %}
+              {% set residual = (load | float - pv | float - grid | float - battery | float) | abs %}
+              {{ 'COHERENT' if residual <= 500 else 'REVIEW_BALANCE' }}
+            {% endif %}
+          evaluation_status: "COLLECTING_NOT_YET_SCORED"
+
+      - name: "GEN24 Shadow Observed Action"
+        unique_id: gen24_shadow_observed_action
+        icon: mdi:battery-sync
+        availability: >-
+          {{ trigger.payload_json.valid | default(false) }}
+        state: >-
+          {% set battery = trigger.payload_json.battery_w | float %}
+          {% if battery <= -100 %}CHARGING
+          {% elif battery >= 100 %}DISCHARGING
+          {% else %}IDLE{% endif %}
+        attributes:
+          firmware_timestamp: "{{ trigger.payload_json.firmware_timestamp | default('unknown') }}"
+          commands_enabled: false
+
+      - name: "GEN24 Shadow Power Balance Residual"
+        unique_id: gen24_shadow_power_balance_residual
+        device_class: power
+        unit_of_measurement: "W"
+        state_class: measurement
+        icon: mdi:scale-balance
+        availability: >-
+          {{ trigger.payload_json.valid | default(false) }}
+        state: >-
+          {% set pv = trigger.payload_json.pv_w | float %}
+          {% set grid = trigger.payload_json.grid_w | float %}
+          {% set load = trigger.payload_json.load_w | float %}
+          {% set battery = trigger.payload_json.battery_w | float %}
+          {{ (load - pv - grid - battery) | round(1) }}
+        attributes:
+          quality_limit_w: 500
+          firmware_timestamp: "{{ trigger.payload_json.firmware_timestamp | default('unknown') }}"
+          commands_enabled: false

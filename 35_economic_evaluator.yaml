@@ -1,0 +1,233 @@
+# =============================================================================
+# 35_economic_evaluator.yaml  —  ekonomisk utvärdering (kolumn A)
+# =============================================================================
+# Mäter det FAKTISKA ekonomiska utfallet (kolumn A) med pluggbar priskälla.
+# Bygger på integration-plattformen (Riemann-summa) for robust energimätning.
+#
+# Prisläge (input_select.gen24_econ_price_mode):
+#   - manual : anvander input_number.gen24_econ_manual_price (ore/kWh)
+#   - spot   : laser input_text.gen24_econ_price_entity (t.ex. NordPool)
+#   - total  : laser samma entitet (framtida: totalpris inkl. skatt/nat)
+#   - fast   : laser samma entitet (framtida: fast pris)
+#
+# Forsta varvet: spot/manual racker (konstant per-kWh-paslag tar ut sig i
+# arbitrage-differensen). Effekttariff lags till som separat term senare.
+#
+# Kolumn B (var state machine) och C (teoretiskt optimal) bygger pa dessa
+# energisensorer i nasta steg.
+#
+# Baslinjerna (import_start/export_start) ar template-sensorer som fangar
+# energivardet vid forsta utvarderingen varje dag och haller det. Inga
+# templates i service-data (undviker HA-versionens begransning).
+# =============================================================================
+
+input_select:
+  gen24_econ_price_mode:
+    name: "GEN24 Econ Price Mode"
+    icon: mdi:cash-multiple
+    options:
+      - manual
+      - spot
+      - total
+      - fast
+    initial: spot
+
+  gen24_econ_price_unit:
+    name: "GEN24 Econ Price Unit"
+    icon: mdi:scale
+    options:
+      - ore_per_kwh
+      - sek_per_kwh
+    initial: sek_per_kwh
+
+input_number:
+  gen24_econ_manual_price:
+    name: "GEN24 Econ Manual Price"
+    icon: mdi:cash
+    unit_of_measurement: "ore/kWh"
+    min: -100
+    max: 500
+    step: 1
+    initial: 0
+
+input_text:
+  gen24_econ_price_entity:
+    name: "GEN24 Econ Price Entity"
+    icon: mdi:link-variant
+    max: 255
+    initial: "sensor.nord_pool_se3_aktuellt_pris"
+
+template:
+  - sensor:
+      - name: "GEN24 Econ Price"
+        unique_id: gen24_econ_price
+        icon: mdi:cash
+        unit_of_measurement: "ore/kWh"
+        state: >-
+          {% set mode = states('input_select.gen24_econ_price_mode') %}
+          {% if mode == 'manual' %}
+            {{ states('input_number.gen24_econ_manual_price') | float(0) }}
+          {% else %}
+            {% set ent = states('input_text.gen24_econ_price_entity') %}
+            {% set p = states(ent) %}
+            {% if p in ['unknown','unavailable','none',''] %}
+              0
+            {% else %}
+              {% set unit = states('input_select.gen24_econ_price_unit') %}
+              {% if unit == 'sek_per_kwh' %}
+                {{ (p | float(0) * 100) | round(1) }}
+              {% else %}
+                {{ p | float(0) }}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        attributes:
+          raw_price: >-
+            {% set mode = states('input_select.gen24_econ_price_mode') %}
+            {% if mode == 'manual' %}
+              {{ states('input_number.gen24_econ_manual_price') | float(0) }}
+            {% else %}
+              {% set ent = states('input_text.gen24_econ_price_entity') %}
+              {% set p = states(ent) %}
+              {{ p if p not in ['unknown','unavailable','none',''] else 0 }}
+            {% endif %}
+          price_unit: >-
+            {{ states('input_select.gen24_econ_price_unit') }}
+          price_entity: >-
+            {{ states('input_text.gen24_econ_price_entity') }}
+
+      - name: "GEN24 Grid Import Power"
+        unique_id: gen24_grid_import_power
+        icon: mdi:transmission-tower-import
+        unit_of_measurement: "W"
+        state: >-
+          {% set g = state_attr('sensor.gen24_state_input', 'grid_w') | float(0) %}
+          {{ g if g > 0 else 0 }}
+
+      - name: "GEN24 Grid Export Power"
+        unique_id: gen24_grid_export_power
+        icon: mdi:transmission-tower-export
+        unit_of_measurement: "W"
+        state: >-
+          {% set g = state_attr('sensor.gen24_state_input', 'grid_w') | float(0) %}
+          {{ -g if g < 0 else 0 }}
+
+      - name: "GEN24 Battery Charge Power"
+        unique_id: gen24_battery_charge_power
+        icon: mdi:battery-arrow-down
+        unit_of_measurement: "W"
+        state: >-
+          {% set b = state_attr('sensor.gen24_state_input', 'battery_w') | float(0) %}
+          {{ -b if b < 0 else 0 }}
+
+      - name: "GEN24 Battery Discharge Power"
+        unique_id: gen24_battery_discharge_power
+        icon: mdi:battery-arrow-up
+        unit_of_measurement: "W"
+        state: >-
+          {% set b = state_attr('sensor.gen24_state_input', 'battery_w') | float(0) %}
+          {{ b if b > 0 else 0 }}
+
+      - name: "GEN24 Econ Import Start"
+        unique_id: gen24_econ_import_start
+        icon: mdi:counter
+        unit_of_measurement: "kWh"
+        state: >-
+          {% set today = now().strftime('%Y-%m-%d') %}
+          {% if this.attributes.get('day') != today %}
+            {{ states('sensor.gen24_grid_import_energy') | float(0) }}
+          {% else %}
+            {{ this.attributes.get('value', 0) | float(0) }}
+          {% endif %}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+          value: >-
+            {% set today = now().strftime('%Y-%m-%d') %}
+            {% if this.attributes.get('day') != today %}
+              {{ states('sensor.gen24_grid_import_energy') | float(0) }}
+            {% else %}
+              {{ this.attributes.get('value', 0) | float(0) }}
+            {% endif %}
+
+      - name: "GEN24 Econ Export Start"
+        unique_id: gen24_econ_export_start
+        icon: mdi:counter
+        unit_of_measurement: "kWh"
+        state: >-
+          {% set today = now().strftime('%Y-%m-%d') %}
+          {% if this.attributes.get('day') != today %}
+            {{ states('sensor.gen24_grid_export_energy') | float(0) }}
+          {% else %}
+            {{ this.attributes.get('value', 0) | float(0) }}
+          {% endif %}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+          value: >-
+            {% set today = now().strftime('%Y-%m-%d') %}
+            {% if this.attributes.get('day') != today %}
+              {{ states('sensor.gen24_grid_export_energy') | float(0) }}
+            {% else %}
+              {{ this.attributes.get('value', 0) | float(0) }}
+            {% endif %}
+
+      - name: "GEN24 Econ Daily Net Import"
+        unique_id: gen24_econ_daily_net_import
+        icon: mdi:transmission-tower
+        unit_of_measurement: "kWh"
+        state: >-
+          {% set imp = states('sensor.gen24_grid_import_energy') | float(0) %}
+          {% set exp = states('sensor.gen24_grid_export_energy') | float(0) %}
+          {% set imp_start = states('sensor.gen24_econ_import_start') | float(0) %}
+          {% set exp_start = states('sensor.gen24_econ_export_start') | float(0) %}
+          {{ (imp - imp_start - (exp - exp_start)) | round(3) }}
+
+      - name: "GEN24 Econ Daily Cost"
+        unique_id: gen24_econ_daily_cost
+        icon: mdi:cash-minus
+        unit_of_measurement: "SEK"
+        state: >-
+          {% set net = states('sensor.gen24_econ_daily_net_import') | float(0) %}
+          {% set price = states('sensor.gen24_econ_price') | float(0) %}
+          {{ (net * price / 100) | round(2) }}
+
+      - name: "GEN24 Econ Battery Cycle"
+        unique_id: gen24_econ_battery_cycle
+        icon: mdi:battery-sync
+        unit_of_measurement: "kWh"
+        state: >-
+          {% set chg = states('sensor.gen24_battery_charge_energy') | float(0) %}
+          {% set dis = states('sensor.gen24_battery_discharge_energy') | float(0) %}
+          {{ (chg + dis) | round(2) }}
+
+sensor:
+  - platform: integration
+    name: "GEN24 Grid Import Energy"
+    unique_id: gen24_grid_import_energy
+    source: sensor.gen24_grid_import_power
+    unit_prefix: k
+    method: left
+    round: 3
+
+  - platform: integration
+    name: "GEN24 Grid Export Energy"
+    unique_id: gen24_grid_export_energy
+    source: sensor.gen24_grid_export_power
+    unit_prefix: k
+    method: left
+    round: 3
+
+  - platform: integration
+    name: "GEN24 Battery Charge Energy"
+    unique_id: gen24_battery_charge_energy
+    source: sensor.gen24_battery_charge_power
+    unit_prefix: k
+    method: left
+    round: 3
+
+  - platform: integration
+    name: "GEN24 Battery Discharge Energy"
+    unique_id: gen24_battery_discharge_energy
+    source: sensor.gen24_battery_discharge_power
+    unit_prefix: k
+    method: left
+    round: 3

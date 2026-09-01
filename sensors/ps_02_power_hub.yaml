@@ -1,0 +1,177 @@
+# =============================================================================
+# ps_02_power_hub.yaml  —  sensor.gen24_power_hub
+# =============================================================================
+# Central EFFEKT-domän-sensor (momentanbalans). Samlar ALLA effektflöden i
+# huset på EN plats med KONSEKVENT enhet och teckenkonvention:
+#
+#   State = load_calc_w  (pålitlig huslast i W — den viktigaste momentana
+#           förbrukningssiffran).
+#
+# TECKENKONVENTION (viktigt — läs detta):
+#   • Alla *_import_w / *_export_w / charging_w / discharging_w är ALLTID ≥ 0.
+#   • grid_net_w      : +import  / −export   (= sensor.gen24_grid_power_signed)
+#   • battery_net_w   : +laddar  / −urladdar (= sensor.gen24_battery_power_signed)
+#   • pv_w / load_*_w : alltid ≥ 0.
+#
+# ENERGIBALANS (härledd, ps_01_wrappers):
+#   Last = PV + Batteri_raw + Grid_raw
+#   där Batteri_raw +=urladdar, Grid_raw +=importerar.
+#   → sensor.gen24_load_power_calc är PÅLITLIG. Fronius egna last-register
+#     (sensor.gen24_load_power) släpar/blir negativt vid molnväxlingar och
+#     ska INTE användas för styrning — den exponeras endast som
+#     load_fronius_w för jämförelse/diagnos.
+#
+# READ-ONLY: ändrar ingenting i systemet. Additiv.
+# Uppdateras automatiskt när PV, grid eller batteriflöde ändras.
+#
+# AUTOMATIONER OCH DASHBOARD SKA LÄSA HÄRIFRÅN:
+#   state_attr('sensor.gen24_power_hub', '<attributnamn>')
+#
+# Tillgängliga attribut — se legend-attributet längst ner.
+# =============================================================================
+
+template:
+  - sensor:
+      - name: "GEN24 Power Hub"
+        unique_id: gen24_power_hub
+        unit_of_measurement: "W"
+        device_class: power
+        state_class: measurement
+
+        icon: >-
+          {% set batt = states('sensor.gen24_battery_power_signed') | float(0) %}
+          {% set grid = states('sensor.gen24_grid_power_signed')    | float(0) %}
+          {% if grid < -50 %}mdi:transmission-tower-export
+          {% elif grid > 50 %}mdi:transmission-tower-import
+          {% elif batt > 50 %}mdi:battery-charging
+          {% elif batt < -50 %}mdi:battery-arrow-down
+          {% else %}mdi:home-lightning-bolt{% endif %}
+
+        availability: >-
+          {{ states('sensor.gen24_solar_pv_power_raw')      not in ['unknown','unavailable','none','']
+             and states('sensor.gen24_solar_battery_power_raw') not in ['unknown','unavailable','none','']
+             and states('sensor.gen24_solar_grid_power_raw')    not in ['unknown','unavailable','none',''] }}
+
+        state: >-
+          {{ states('sensor.gen24_load_power_calc') | float(0) | round(0) | int }}
+
+        attributes:
+
+          # ================================================================
+          # PRODUKTION & LAST
+          # ================================================================
+
+          pv_w: >-
+            {{ states('sensor.gen24_solar_pv_power') | float(0) | round(0) | int }}
+
+          load_calc_w: >-
+            {{ states('sensor.gen24_load_power_calc') | float(0) | round(0) | int }}
+
+          load_fronius_w: >-
+            {{ states('sensor.gen24_load_power') | float(0) | round(0) | int }}
+
+          # ================================================================
+          # NÄT (grid)
+          # ================================================================
+
+          grid_import_w: >-
+            {{ states('sensor.gen24_grid_import_power') | float(0) | round(0) | int }}
+
+          grid_export_w: >-
+            {{ states('sensor.gen24_grid_export_power') | float(0) | round(0) | int }}
+
+          # Signerad: +import / −export
+          grid_net_w: >-
+            {{ states('sensor.gen24_grid_power_signed') | float(0) | round(0) | int }}
+
+          # ================================================================
+          # BATTERI (samma teckenkonvention som battery_hub: +laddar/−urladdar)
+          # ================================================================
+
+          battery_net_w: >-
+            {{ states('sensor.gen24_battery_power_signed') | float(0) | round(0) | int }}
+
+          battery_charging_w: >-
+            {{ [states('sensor.gen24_battery_power_signed') | float(0), 0] | max | round(0) | int }}
+
+          battery_discharging_w: >-
+            {{ [-(states('sensor.gen24_battery_power_signed') | float(0)), 0] | max | round(0) | int }}
+
+          # ================================================================
+          # HÄRLEDDA FLÖDEN
+          # ================================================================
+
+          # Egenförbrukad sol = PV minus det som exporteras (aldrig < 0).
+          self_consumption_w: >-
+            {% set pv  = states('sensor.gen24_solar_pv_power')   | float(0) %}
+            {% set exp = states('sensor.gen24_grid_export_power') | float(0) %}
+            {{ [pv - exp, 0] | max | round(0) | int }}
+
+          # PV-överskott utöver husets last (aldrig < 0). Positivt = kan
+          # laddas till batteri eller exporteras.
+          pv_surplus_w: >-
+            {% set pv   = states('sensor.gen24_solar_pv_power')    | float(0) %}
+            {% set load = states('sensor.gen24_load_power_calc')   | float(0) %}
+            {{ [pv - load, 0] | max | round(0) | int }}
+
+          # ================================================================
+          # DIAGNOS
+          # ================================================================
+
+          # Avvikelse mellan Fronius egna last-register och den härledda
+          # (pålitliga) lasten. Nära 0 = sensorerna är i synk; stort värde =
+          # Fronius load_power släpar/är fel (förväntat vid molnväxlingar).
+          balance_error_w: >-
+            {% set fronius = states('sensor.gen24_load_power')      | float(0) %}
+            {% set calc    = states('sensor.gen24_load_power_calc') | float(0) %}
+            {{ (fronius - calc) | round(0) | int }}
+
+          # Smartmeter-register. OBS: ×10 FÖR STORT på denna instans
+          # (kosmetisk bugg). Använd grid_net_w/grid_import_w för styrning.
+          smartmeter_w: >-
+            {{ states('sensor.gen24_grid_power_smartmeter') | float(0) | round(0) | int }}
+
+          # ================================================================
+          # STATUS-FLAGGOR
+          # ================================================================
+
+          is_exporting: >-
+            {{ states('sensor.gen24_grid_power_signed') | float(0) < -50 }}
+
+          is_importing: >-
+            {{ states('sensor.gen24_grid_power_signed') | float(0) > 50 }}
+
+          is_battery_charging: >-
+            {{ states('sensor.gen24_battery_power_signed') | float(0) > 50 }}
+
+          is_battery_discharging: >-
+            {{ states('sensor.gen24_battery_power_signed') | float(0) < -50 }}
+
+          has_pv_surplus: >-
+            {% set pv   = states('sensor.gen24_solar_pv_power')  | float(0) %}
+            {% set load = states('sensor.gen24_load_power_calc') | float(0) %}
+            {{ (pv - load) > 50 }}
+
+          # ================================================================
+          # FÖRKLARING
+          # ================================================================
+          legend: >-
+            STATE (W) = load_calc_w, pålitlig huslast (PV+Batt_raw+Grid_raw).
+            pv_w            = Solproduktion nu (≥0).
+            load_calc_w     = Pålitlig huslast (samma som state).
+            load_fronius_w  = Fronius egna last-register (OPÅLITLIG, endast diagnos).
+            grid_import_w   = Import från nät (≥0).
+            grid_export_w   = Export till nät (≥0).
+            grid_net_w      = Signerad nät-effekt: +import / −export.
+            battery_net_w   = Signerat batteriflöde: +laddar / −urladdar.
+            battery_charging_w    = Laddeffekt (≥0).
+            battery_discharging_w = Urladdningseffekt (≥0).
+            self_consumption_w = Egenförbrukad sol = PV − export (≥0).
+            pv_surplus_w    = PV utöver last = PV − load_calc (≥0).
+            balance_error_w = load_fronius − load_calc (nära 0 = i synk).
+            smartmeter_w    = Smartmeter-register (OBS ×10 för stort, kosmetiskt).
+            is_exporting          = True om export > 50 W.
+            is_importing          = True om import > 50 W.
+            is_battery_charging   = True om batteriet laddar (>50 W).
+            is_battery_discharging= True om batteriet urladdar (>50 W).
+            has_pv_surplus        = True om PV överstiger last (>50 W).

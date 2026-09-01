@@ -1,0 +1,160 @@
+# =============================================================================
+# ps_02_forecast_hub.yaml  —  sensor.gen24_forecast_hub
+# =============================================================================
+# Central PROGNOS-domän-sensor. Samlar ALL solprognos-information på EN plats:
+# produktionsprognoser (kvar idag / nästa timme / imorgon), prognospoäng,
+# nivå, källa, träffsäkerhet och de prognosdrivna SoC-målen.
+#
+#   State = today_total_kwh  (dagens förväntade totala solproduktion, kWh).
+#
+# Alla energivärden: kWh. Alla SoC-nivåer: % (0–100). Accuracy: %.
+#
+# Prognoskällan väljs via input_select.gen24_forecast_source
+# ("Forecast.Solar" eller "Solar Forecast ML"); de underliggande
+# gen24_forecast_*-sensorerna abstraherar bort vilken tjänst som används,
+# så denna hub är oberoende av källan.
+#
+# READ-ONLY: ändrar ingenting i systemet. Additiv.
+#
+# AUTOMATIONER OCH DASHBOARD SKA LÄSA HÄRIFRÅN:
+#   state_attr('sensor.gen24_forecast_hub', '<attributnamn>')
+#
+# Tillgängliga attribut — se legend-attributet längst ner.
+# =============================================================================
+
+template:
+  - sensor:
+      - name: "GEN24 Forecast Hub"
+        unique_id: gen24_forecast_hub
+        unit_of_measurement: "kWh"
+        icon: >-
+          {% set v = states('sensor.gen24_forecast_today_total_kwh') | float(0) %}
+          {% if v > 10 %}mdi:white-balance-sunny
+          {% elif v > 3 %}mdi:weather-partly-cloudy
+          {% else %}mdi:weather-cloudy{% endif %}
+
+        availability: >-
+          {{ states('sensor.gen24_forecast_today_total_kwh') not in ['unknown','unavailable','none','']
+             or states('sensor.gen24_forecast_tomorrow_kwh') not in ['unknown','unavailable','none',''] }}
+
+        state: >-
+          {{ states('sensor.gen24_forecast_today_total_kwh') | float(-1) | round(2) }}
+
+        attributes:
+
+          # ================================================================
+          # KÄLLA & TILLGÄNGLIGHET
+          # ================================================================
+
+          source: >-
+            {{ states('input_select.gen24_forecast_source') | default('unknown') }}
+
+          available: >-
+            {% set av = states('sensor.gen24_forecast_available') %}
+            {{ av in ['True','true','on'] }}
+
+          # ================================================================
+          # PRODUKTIONSPROGNOS (kWh)
+          # ================================================================
+
+          today_total_kwh: >-
+            {{ states('sensor.gen24_forecast_today_total_kwh') | float(-1) | round(2) }}
+
+          remaining_today_kwh: >-
+            {{ states('sensor.gen24_forecast_remaining_kwh') | float(-1) | round(2) }}
+
+          next_hour_kwh: >-
+            {{ states('sensor.gen24_forecast_next_hour_kwh') | float(-1) | round(2) }}
+
+          next_hour_w: >-
+            {{ states('sensor.gen24_forecast_next_hour_w') | float(-1) | round(0) | int }}
+
+          tomorrow_kwh: >-
+            {{ states('sensor.gen24_forecast_tomorrow_kwh') | float(-1) | round(2) }}
+
+          # ================================================================
+          # PROGNOSPOÄNG & NIVÅ
+          # ================================================================
+
+          score: >-
+            {{ states('sensor.gen24_solar_forecast_score') | int(-1) }}
+
+          level: >-
+            {% set s = states('sensor.gen24_solar_forecast_score') | int(-1) %}
+            {% if s < 0 %}unknown
+            {% elif s >= 60 %}high
+            {% elif s >= 30 %}medium
+            {% else %}low{% endif %}
+
+          # ================================================================
+          # PROGNOSDRIVNA SoC-MÅL (%)
+          # ================================================================
+
+          dynamic_target_soc: >-
+            {{ states('sensor.gen24_dynamic_target_soc') | float(-1) | round(0) | int }}
+
+          charge_target_soc: >-
+            {{ states('sensor.gen24_charge_target_soc') | float(-1) | round(0) | int }}
+
+          charge_target_reference_window: >-
+            {{ state_attr('sensor.gen24_charge_target_soc', 'reference_window') | default('unknown') }}
+
+          charge_target_reference_pv_kwh: >-
+            {{ state_attr('sensor.gen24_charge_target_soc', 'reference_pv_kwh') | default(-1) }}
+
+          # ================================================================
+          # IMORGON-FLAGGOR (för nattladdningsbeslut)
+          # ================================================================
+
+          pv_tomorrow_is_low: >-
+            {% set v = states('sensor.gen24_pv_tomorrow_is_low') %}
+            {{ v in ['True','true','on'] }}
+
+          pv_tomorrow_is_high: >-
+            {% set v = states('sensor.gen24_pv_tomorrow_is_high') %}
+            {{ v in ['True','true','on'] }}
+
+          # ================================================================
+          # TRÄFFSÄKERHET (%) — beror på tillgängliga integrationer
+          # ================================================================
+
+          ml_accuracy_30d_pct: >-
+            {{ states('sensor.solar_forecast_ml_prediction_accuracy_30_day') | float(-1) | round(1) }}
+
+          fusion_accuracy_pct: >-
+            {{ states('sensor.weather_fusion_accuracy_display') | float(-1) | round(1) }}
+
+          # ================================================================
+          # TOPP-TIDER
+          # ================================================================
+
+          peak_time_today: >-
+            {{ states('sensor.power_highest_peak_time_today') | default('unknown') }}
+
+          peak_time_tomorrow: >-
+            {{ states('sensor.power_highest_peak_time_tomorrow') | default('unknown') }}
+
+          # ================================================================
+          # FÖRKLARING
+          # ================================================================
+          legend: >-
+            STATE (kWh) = today_total_kwh, dagens förväntade totala solproduktion.
+            source           = Vald prognoskälla (Forecast.Solar / Solar Forecast ML).
+            available        = True om någon prognos finns.
+            today_total_kwh  = Total förväntad produktion idag (samma som state).
+            remaining_today_kwh = Återstående förväntad produktion idag.
+            next_hour_kwh    = Förväntad produktion nästa timme.
+            next_hour_w      = Samma i W (för effektjämförelser).
+            tomorrow_kwh     = Total förväntad produktion imorgon.
+            score            = Prognospoäng 0–100 (dagtidsladdningens beslutsunderlag).
+            level            = high/medium/low härlett ur score.
+            dynamic_target_soc = Dynamiskt SoC-mål (score-baserat).
+            charge_target_soc  = PV-prognosdrivet ChargeCheap-mål (%).
+            charge_target_reference_window = Vilket fönster charge_target använder (tomorrow/remaining_today).
+            charge_target_reference_pv_kwh = PV-kWh som charge_target räknar på.
+            pv_tomorrow_is_low  = True om imorgon < låg-tröskel (ladda mer inatt).
+            pv_tomorrow_is_high = True om imorgon > hög-tröskel (låt solen fylla).
+            ml_accuracy_30d_pct = Solar Forecast ML träffsäkerhet 30 dagar (%).
+            fusion_accuracy_pct = Weather Fusion AI träffsäkerhet (%).
+            peak_time_today     = Tidpunkt för dagens produktionstopp.
+            peak_time_tomorrow  = Tidpunkt för morgondagens produktionstopp.

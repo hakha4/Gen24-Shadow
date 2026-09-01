@@ -1,0 +1,310 @@
+# =============================================================================
+# gen24_helpers.yaml
+# =============================================================================
+# MIGRATION: Denna fils helpers har flyttats till packages/00_config.yaml, som
+# nu är den enda aktiva källan. Innehållet nedan är UTKOMMENTERAT för att undvika
+# duplicerade nycklar (Home Assistant tillåter inte att samma helper definieras i
+# två paket samtidigt — det ger "Duplicate key"-fel och paketet laddas inte).
+#
+# Filen behålls (raderas ej) som referens/backup tills 00_config.yaml verifierats
+# i drift. Originalinnehållet finns kvar oförändrat nedan, rad för rad, som
+# kommentarer.
+# =============================================================================
+
+
+# # =============================================================
+# # OBS (MIGRATION): Denna fil ERSÄTTS av packages/00_config.yaml, som nu
+# # konsoliderar alla helpers. Behålls tills vidare intakt för bakåtkompatibilitet.
+# # Alla helpers nedan finns även i 00_config.yaml (identiska definitioner) —
+# # ta bort denna fil när 00_config.yaml verifierats i drift.
+# # =============================================================
+# # gen24_helpers.yaml
+# # Alla input_* helpers för GEN24 v9 + exportmode + selfcons.
+# # Konsoliderad från gen24_new_entities_v9.yaml och
+# # exportmode-blocket som låg felaktigt i automationsfilen.
+# # =============================================================
+
+# input_boolean:
+
+#   gen24_auto_boost_active:
+#     name: "GEN24 Auto Boost Active"
+#     icon: mdi:lightning-bolt
+
+#   gen24_night_ev_peak_mode:
+#     name: "GEN24 Night EV Peak Mode Active"
+#     initial: false
+#     icon: mdi:car-electric
+
+#   gen24_selfcons_enabled:
+#     name: "GEN24 Daytime Self-Consumption (avoid grid import)"
+#     initial: true
+#     icon: mdi:solar-panel
+
+# input_number:
+
+#   # --- Batterikapacitet & natt-urladdning ---
+
+#   gen24_battery_capacity_kwh:
+#     name: "GEN24 Battery Capacity (kWh)"
+#     icon: mdi:battery
+#     min: 1
+#     max: 30
+#     step: 0.1
+#     unit_of_measurement: "kWh"
+#     mode: box
+#     initial: 17
+
+#   gen24_night_discharge_soc_trigger:
+#     name: "GEN24 Night Discharge SoC Trigger (%)"
+#     icon: mdi:battery-arrow-down
+#     min: 40
+#     max: 90
+#     step: 1
+#     unit_of_measurement: "%"
+#     mode: box
+#     initial: 60
+
+#   gen24_night_discharge_target_soc:
+#     name: "GEN24 Night Discharge Target SoC (%)"
+#     icon: mdi:battery-30
+#     min: 10
+#     max: 60
+#     step: 1
+#     unit_of_measurement: "%"
+#     mode: box
+#     initial: 40
+
+#   gen24_night_solar_min_kwh:
+#     name: "GEN24 Night Solar Min Tomorrow (kWh)"
+#     icon: mdi:weather-sunny
+#     min: 1
+#     max: 30
+#     step: 0.5
+#     unit_of_measurement: "kWh"
+#     mode: box
+#     initial: 4
+
+#   gen24_manual_discharge_limit_w:
+#     name: "GEN24 Manual Discharge Limit (W)"
+#     icon: mdi:battery-arrow-down
+#     min: 500
+#     max: 5000
+#     step: 100
+#     unit_of_measurement: "W"
+#     mode: box
+#     initial: 1700
+
+#   gen24_system_max_daily_kwh:
+#     name: "GEN24 System Max Daily kWh"
+#     icon: mdi:solar-power-variant
+#     min: 1
+#     max: 100
+#     step: 1
+#     unit_of_measurement: "kWh"
+#     mode: box
+#     initial: 30
+
+#   # --- Self-consumption (undvik nätimport dagtid) ---
+
+#   gen24_selfcons_max_discharge_w:
+#     name: "GEN24 Self-Consumption Max Discharge (W)"
+#     icon: mdi:battery-arrow-down
+#     min: 200
+#     max: 5000
+#     step: 100
+#     unit_of_measurement: "W"
+#     mode: box
+#     initial: 3000
+
+#   gen24_selfcons_min_import_w:
+#     name: "GEN24 Self-Consumption Min Import Trigger (W)"
+#     icon: mdi:transmission-tower-import
+#     min: 50
+#     max: 1000
+#     step: 50
+#     unit_of_measurement: "W"
+#     mode: box
+#     initial: 100
+
+#   # --- Charge Cheap (arbitrage: ladda billigt, fast pris) ---
+
+#   gen24_chargecheap_target_soc:
+#     name: "Gen24 Charge Cheap target SoC (%)"
+#     icon: mdi:battery-charging
+#     min: 0
+#     max: 100
+#     step: 1
+#     unit_of_measurement: "%"
+#     mode: box
+#     initial: 85
+
+#   gen24_chargecheap_min_soc:
+#     name: "Gen24 Charge Cheap min SoC (aktivera under)"
+#     icon: mdi:battery-low
+#     min: 0
+#     max: 100
+#     step: 1
+#     unit_of_measurement: "%"
+#     mode: box
+#     initial: 20
+
+#   gen24_chargecheap_max_charge_w:
+#     name: "Gen24 Charge Cheap max laddeffekt (W)"
+#     icon: mdi:lightning-bolt
+#     min: 0
+#     max: 6000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 2500
+
+#   gen24_chargecheap_import_headroom_w:
+#     name: "Gen24 Charge Cheap importbudget (W)"
+#     icon: mdi:transmission-tower-import
+#     min: 0
+#     max: 20000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 3000
+
+#   gen24_chargecheap_ramp_step_w:
+#     name: "Gen24 Charge Cheap rampsteg (W)"
+#     icon: mdi:stairs-up
+#     min: 10
+#     max: 3000
+#     step: 10
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 200
+
+#   gen24_chargecheap_hysteresis_w:
+#     name: "Gen24 Charge Cheap hysteresis (W)"
+#     icon: mdi:waves
+#     min: 0
+#     max: 2000
+#     step: 10
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 150
+
+#   gen24_chargecheap_min_runtime_s:
+#     name: "Gen24 Charge Cheap min runtime (s)"
+#     icon: mdi:timer
+#     min: 0
+#     max: 7200
+#     step: 10
+#     unit_of_measurement: s
+#     mode: box
+#     initial: 300
+
+#   gen24_chargecheap_hard_stop_import_w:
+#     name: "Gen24 Charge Cheap HARD STOP import (W)"
+#     icon: mdi:stop-circle
+#     min: 0
+#     max: 20000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 6500
+
+#   # --- Exportmode (arbitrage: sälj dyrt) ---
+
+#   gen24_exportmode_target_export_w:
+#     name: "Gen24 Exportmode target export (PV-export)"
+#     min: 0
+#     max: 5000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 500
+
+#   gen24_exportmode_max_discharge_w:
+#     name: "Gen24 Exportmode max discharge (PV-export)"
+#     min: 0
+#     max: 6000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 1500
+
+#   gen24_exportmode_force_target_export_w:
+#     name: "Gen24 Exportmode FORCE target export (no PV)"
+#     min: 0
+#     max: 5000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 600
+
+#   gen24_exportmode_force_max_discharge_w:
+#     name: "Gen24 Exportmode FORCE max discharge (no PV)"
+#     min: 0
+#     max: 6000
+#     step: 50
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 1500
+
+#   gen24_exportmode_force_import_guard_w:
+#     name: "Gen24 Exportmode FORCE import guard"
+#     min: 0
+#     max: 1000
+#     step: 10
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 80
+
+#   gen24_exportmode_hard_stop_import_w:
+#     name: "Gen24 Exportmode HARD STOP import (W)"
+#     min: 0
+#     max: 6000
+#     step: 100
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 2000
+
+#   gen24_exportmode_force_ramp_step_w:
+#     name: "Gen24 Exportmode FORCE ramp step"
+#     min: 10
+#     max: 2000
+#     step: 10
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 150
+
+#   gen24_exportmode_hysteresis_w:
+#     name: "Gen24 Exportmode hysteresis"
+#     min: 0
+#     max: 1000
+#     step: 10
+#     unit_of_measurement: W
+#     mode: box
+#     initial: 100
+
+#   gen24_exportmode_min_runtime_s:
+#     name: "Gen24 Exportmode min runtime"
+#     min: 0
+#     max: 3600
+#     step: 10
+#     unit_of_measurement: s
+#     mode: box
+#     initial: 180
+
+#   gen24_base_night_load_kw:
+#     name: "GEN24 Base Night Load (kW)"
+#     icon: mdi:home-lightning-bolt-outline
+#     min: 0.0
+#     max: 3.0
+#     step: 0.1
+#     unit_of_measurement: "kW"
+#     mode: box
+#     initial: 0.8
+
+# input_text:
+
+#   gen24_solar_forecast_summary:
+#     name: "GEN24 Solar Forecast Summary"
+#     icon: mdi:text-box-outline
+#     max: 255
+#     initial: "Ingen prognos ännu"

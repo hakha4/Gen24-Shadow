@@ -1,0 +1,755 @@
+script:
+  # STEP 1 - paste this complete block into /config/scripts.yaml.
+  # It is self-contained and only subscribes to MQTT. It publishes no commands.
+
+  gen24_shadow_diagnostics_step1:
+    alias: "GEN24 Shadow diagnostik - steg 1 read-only"
+    description: >-
+      Lyssnar direkt på tre retained MQTT-statusar och verifierar att shadow-
+      firmwaren är online och inte kan skriva Modbus. Skickar inga kommandon.
+    icon: mdi:shield-check-outline
+    mode: single
+    sequence:
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/conn_status"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          connection_value: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/operating_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          operating_mode_value: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          writes_enabled_value: >-
+            {{ wait.trigger.payload | trim | lower if wait.completed else 'TIMEOUT' }}
+          connection_pass: "{{ connection_value == 'Online' }}"
+          operating_mode_pass: "{{ operating_mode_value == 'SHADOW_READ_ONLY' }}"
+          writes_disabled_pass: "{{ writes_enabled_value in ['0', 'false'] }}"
+
+      - variables:
+          all_passed: >-
+            {{ connection_pass and operating_mode_pass and writes_disabled_pass }}
+          result_text: >-
+            {{ 'PASS' if all_passed else 'FAIL' }} |
+            connection={{ connection_value }},
+            operating_mode={{ operating_mode_value }},
+            modbus_writes_enabled={{ writes_enabled_value }}
+
+      - service: persistent_notification.create
+        data:
+          notification_id: gen24_shadow_diagnostics_step1
+          title: "GEN24 shadowdiagnostik steg 1: {{ 'PASS' if all_passed else 'FAIL' }}"
+          message: >-
+            {{ result_text }}.
+            Detta steg var helt read-only och skickade inga MQTT-kommandon.
+
+  gen24_shadow_diagnostics_step2:
+    alias: "GEN24 Shadow diagnostik - steg 2 kontrolläge"
+    description: "Säkerhetskontroll, växla kontrolläge, verifiera och återställ."
+    icon: mdi:tune-variant
+    mode: single
+    sequence:
+      # Samma read-only-kontroll som i steg 1
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/conn_status"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          connection_value: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/operating_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          operating_mode_value: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          writes_enabled_value: >-
+            {{ wait.trigger.payload | trim | lower
+               if wait.completed else 'TIMEOUT' }}
+          preflight_ok: >-
+            {{ connection_value == 'Online'
+               and operating_mode_value == 'SHADOW_READ_ONLY'
+               and writes_enabled_value in ['0', 'false'] }}
+
+      - choose:
+          - conditions: "{{ not preflight_ok }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step2
+                  title: "GEN24 shadowdiagnostik steg 2: AVBRUTEN"
+                  message: >-
+                    Inga kommandon skickades.
+                    connection={{ connection_value }},
+                    operating_mode={{ operating_mode_value }},
+                    writes={{ writes_enabled_value }}.
+              - stop: "Shadow read-only preflight failed"
+
+      # Läs ursprungligt kontrolläge
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          original_mode: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+          original_mode_valid: >-
+            {{ wait.completed and
+               wait.trigger.payload | trim == 'AUTO' }}
+
+      - choose:
+          - conditions: "{{ not original_mode_valid }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step2
+                  title: "GEN24 shadowdiagnostik steg 2: AVBRUTEN"
+                  message: >-
+                    Steg 2 kräver startläge AUTO men läste {{ original_mode }}.
+                    Inget kontrollkommando skickades.
+              - stop: "Step 2 requires AUTO start mode"
+
+      # Deterministiskt test: AUTO -> MANUAL -> AUTO.
+      - variables:
+          test_payload: "MANUAL"
+          expected_test_mode: "MANUAL"
+          restore_payload: "AUTO"
+
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "{{ test_payload }}"
+          qos: 0
+          retain: false
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "MANUAL"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          test_response: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+          toggle_pass: >-
+            {{ wait.completed and
+               wait.trigger.payload | trim == expected_test_mode }}
+
+      # Återställ alltid ursprungligt läge
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "{{ restore_payload }}"
+          qos: 0
+          retain: false
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "AUTO"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          restore_response: >-
+            {{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}
+          restore_pass: >-
+            {{ wait.completed and
+               wait.trigger.payload | trim == original_mode }}
+          all_passed: "{{ toggle_pass and restore_pass }}"
+
+      - service: persistent_notification.create
+        data:
+          notification_id: gen24_shadow_diagnostics_step2
+          title: >-
+            GEN24 shadowdiagnostik steg 2:
+            {{ 'PASS' if all_passed else 'FAIL' }}
+          message: >-
+            {{ 'PASS' if all_passed else 'FAIL' }} |
+            preflight=PASS,
+            original={{ original_mode }},
+            test={{ test_payload }} -> {{ test_response }},
+            restore={{ restore_payload }} -> {{ restore_response }}.
+            Inga effektkommandon skickades.
+
+  gen24_shadow_diagnostics_step3:
+    alias: "GEN24 Shadow diagnostik - steg 3 strikt validering"
+    description: >-
+      Verifierar att ogiltiga effektpayloads blockeras före registerplan.
+      Inget giltigt effektkommando skickas.
+    icon: mdi:shield-alert-outline
+    mode: single
+    sequence:
+      # Mandatory read-only preflight.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/conn_status"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          connection_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/operating_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          operating_mode_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          writes_enabled_value: >-
+            {{ wait.trigger.payload | trim | lower if wait.completed else 'TIMEOUT' }}
+          preflight_ok: >-
+            {{ connection_value == 'Online' and operating_mode_value == 'SHADOW_READ_ONLY'
+               and writes_enabled_value in ['0', 'false'] }}
+      - choose:
+          - conditions: "{{ not preflight_ok }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step3
+                  title: "GEN24 shadowdiagnostik steg 3: AVBRUTEN"
+                  message: >-
+                    Read-only preflight misslyckades. Inga kommandon skickades.
+                    connection={{ connection_value }}, mode={{ operating_mode_value }},
+                    writes={{ writes_enabled_value }}.
+              - stop: "Shadow read-only preflight failed"
+
+      # Step 3 is deliberately deterministic from AUTO.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          original_mode: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - choose:
+          - conditions: "{{ original_mode != 'AUTO' }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step3
+                  title: "GEN24 shadowdiagnostik steg 3: AVBRUTEN"
+                  message: "Steg 3 kräver startläge AUTO men läste {{ original_mode }}."
+              - stop: "Step 3 requires AUTO start mode"
+
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "MANUAL"
+          qos: 0
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "MANUAL"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          manual_pass: "{{ wait.completed }}"
+      - choose:
+          - conditions: "{{ not manual_pass }}"
+            sequence:
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "AUTO"
+                  qos: 0
+                  retain: false
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step3
+                  title: "GEN24 shadowdiagnostik steg 3: FAIL"
+                  message: "MANUAL kunde inte verifieras. AUTO begärdes; inget effekt-topic skickades."
+              - stop: "MANUAL mode verification failed"
+
+      # Prime retained decision with a different action. This invalid payload
+      # must be rejected; it is not itself used as the final PASS criterion.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontrolcharge"
+          payload: "1000w_step3_prime"
+          qos: 0
+          retain: false
+      - delay: "00:00:02"
+
+      # Final test uses DISCHARGE_FORCE so stale CHARGE_FORCE cannot pass.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontroldischarge"
+          payload: "1000w_step3_test"
+          qos: 0
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/shadow/decision"
+            value_template: >-
+              {{ [value_json.outcome | default(''),
+                  value_json.blocked_by | default(''),
+                  value_json.effective_action | default(''),
+                  value_json.writes_executed | string | lower] | join('|') }}
+            payload: "BLOCKED|invalid_numeric_payload_or_range|DISCHARGE_FORCE|false"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          invalid_pass: "{{ wait.completed }}"
+
+      # Always restore AUTO.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "AUTO"
+          qos: 0
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "AUTO"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          restore_pass: "{{ wait.completed }}"
+          all_passed: "{{ manual_pass and invalid_pass and restore_pass }}"
+      - service: persistent_notification.create
+        data:
+          notification_id: gen24_shadow_diagnostics_step3
+          title: "GEN24 shadowdiagnostik steg 3: {{ 'PASS' if all_passed else 'FAIL' }}"
+          message: >-
+            {{ 'PASS' if all_passed else 'FAIL' }} |
+            preflight=PASS, manual={{ manual_pass }},
+            invalid_payload_blocked={{ invalid_pass }}, restore_auto={{ restore_pass }}.
+            Endast avsiktligt ogiltiga effektpayloads skickades;
+            inget giltigt effektkommando skickades.
+
+  gen24_shadow_diagnostics_step4:
+    alias: "GEN24 Shadow diagnostik - steg 4 simulerad effekt"
+    description: >-
+      Verifierar ett giltigt simulerat urladdningsbeslut och att en ny
+      pseudowrite skapas utan verklig Modbus-skrivning.
+    icon: mdi:battery-arrow-down-outline
+    mode: single
+    sequence:
+      # Mandatory read-only preflight.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/conn_status"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          connection_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/operating_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          operating_mode_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          writes_enabled_value: >-
+            {{ wait.trigger.payload | trim | lower if wait.completed else 'TIMEOUT' }}
+          preflight_ok: >-
+            {{ connection_value == 'Online' and operating_mode_value == 'SHADOW_READ_ONLY'
+               and writes_enabled_value in ['0', 'false'] }}
+      - choose:
+          - conditions: "{{ not preflight_ok }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step4
+                  title: "GEN24 shadowdiagnostik steg 4: AVBRUTEN"
+                  message: >-
+                    Read-only preflight misslyckades. Inga kommandon skickades.
+                    connection={{ connection_value }}, mode={{ operating_mode_value }},
+                    writes={{ writes_enabled_value }}.
+              - stop: "Shadow read-only preflight failed"
+
+      # Deterministic start mode.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          original_mode: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - choose:
+          - conditions: "{{ original_mode != 'AUTO' }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step4
+                  title: "GEN24 shadowdiagnostik steg 4: AVBRUTEN"
+                  message: "Steg 4 kräver startläge AUTO men läste {{ original_mode }}."
+              - stop: "Step 4 requires AUTO start mode"
+
+      # Capture retained pseudo-write sequence before the valid test.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/pseudo_write/modbus"
+        timeout: "00:00:05"
+        continue_on_timeout: true
+      - variables:
+          pseudo_sequence_before: >-
+            {{ ((wait.trigger.payload | from_json).sequence | int(0))
+               if wait.completed else 0 }}
+          pseudo_key_before: >-
+            {{ (((wait.trigger.payload | from_json).boot_id | default('legacy') | string)
+                ~ ':' ~ ((wait.trigger.payload | from_json).sequence | int(0) | string))
+               if wait.completed else 'none:0' }}
+
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "MANUAL"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "MANUAL"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          manual_pass: "{{ wait.completed }}"
+      - choose:
+          - conditions: "{{ not manual_pass }}"
+            sequence:
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "AUTO"
+                  qos: 1
+                  retain: false
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step4
+                  title: "GEN24 shadowdiagnostik steg 4: FAIL"
+                  message: "MANUAL kunde inte verifieras. AUTO begärdes; inget effekt-topic skickades."
+              - stop: "MANUAL mode verification failed"
+
+      # Prime decision with a different outcome so retained data cannot pass.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontrolcharge"
+          payload: "step4_prime_invalid"
+          qos: 1
+          retain: false
+      - delay: "00:00:02"
+
+      # First valid effect payload in the diagnostic chain. Firmware remains
+      # read-only and must report SIMULATED with writes_executed=false.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontroldischarge"
+          payload: "1000"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/shadow/decision"
+            value_template: >-
+              {{ [value_json.outcome | default(''),
+                  value_json.effective_action | default(''),
+                  value_json.writes_executed | string | lower] | join('|') }}
+            payload: "SIMULATED|DISCHARGE_FORCE|false"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          decision_pass: "{{ wait.completed }}"
+
+      # The retained pseudo-write must now have a larger sequence number and
+      # explicitly state that it was not executed.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/pseudo_write/modbus"
+        timeout: "00:00:05"
+        continue_on_timeout: true
+      - variables:
+          pseudo_sequence_after: >-
+            {{ ((wait.trigger.payload | from_json).sequence | int(0))
+               if wait.completed else 0 }}
+          pseudo_key_after: >-
+            {{ (((wait.trigger.payload | from_json).boot_id | default('legacy') | string)
+                ~ ':' ~ ((wait.trigger.payload | from_json).sequence | int(0) | string))
+               if wait.completed else 'none:0' }}
+          pseudo_executed: >-
+            {{ (wait.trigger.payload | from_json).executed
+               if wait.completed else true }}
+          pseudo_writes_enabled: >-
+            {{ (wait.trigger.payload | from_json).writes_enabled
+               if wait.completed else true }}
+          pseudo_pass: >-
+            {{ wait.completed
+               and pseudo_key_after != pseudo_key_before
+               and pseudo_executed == false
+               and pseudo_writes_enabled == false }}
+
+      # Always restore AUTO.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "AUTO"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "AUTO"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          restore_pass: "{{ wait.completed }}"
+          all_passed: >-
+            {{ manual_pass and decision_pass and pseudo_pass and restore_pass }}
+      - service: persistent_notification.create
+        data:
+          notification_id: gen24_shadow_diagnostics_step4
+          title: "GEN24 shadowdiagnostik steg 4: {{ 'PASS' if all_passed else 'FAIL' }}"
+          message: >-
+            {{ 'PASS' if all_passed else 'FAIL' }} |
+            preflight=PASS, manual={{ manual_pass }}, decision={{ decision_pass }},
+            pseudo={{ pseudo_pass }} (seq {{ pseudo_sequence_before }} -> {{ pseudo_sequence_after }},
+            executed={{ pseudo_executed }}, writes_enabled={{ pseudo_writes_enabled }}),
+            restore_auto={{ restore_pass }}.
+
+  gen24_shadow_diagnostics_step5:
+    alias: "GEN24 Shadow diagnostik - steg 5 debounce"
+    description: >-
+      Verifierar att ett omedelbart duplicerat effektkommando blockeras och
+      inte skapar några nya pseudowrites.
+    icon: mdi:timer-cancel-outline
+    mode: single
+    sequence:
+      # Mandatory read-only preflight.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/conn_status"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          connection_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/operating_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          operating_mode_value: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          writes_enabled_value: >-
+            {{ wait.trigger.payload | trim | lower if wait.completed else 'TIMEOUT' }}
+          preflight_ok: >-
+            {{ connection_value == 'Online' and operating_mode_value == 'SHADOW_READ_ONLY'
+               and writes_enabled_value in ['0', 'false'] }}
+      - choose:
+          - conditions: "{{ not preflight_ok }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step5
+                  title: "GEN24 shadowdiagnostik steg 5: AVBRUTEN"
+                  message: >-
+                    Read-only preflight misslyckades. Inga kommandon skickades.
+                    connection={{ connection_value }}, mode={{ operating_mode_value }},
+                    writes={{ writes_enabled_value }}.
+              - stop: "Shadow read-only preflight failed"
+
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          original_mode: "{{ wait.trigger.payload | trim if wait.completed else 'TIMEOUT' }}"
+      - choose:
+          - conditions: "{{ original_mode != 'AUTO' }}"
+            sequence:
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step5
+                  title: "GEN24 shadowdiagnostik steg 5: AVBRUTEN"
+                  message: "Steg 5 kräver startläge AUTO men läste {{ original_mode }}."
+              - stop: "Step 5 requires AUTO start mode"
+
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "MANUAL"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "MANUAL"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          manual_pass: "{{ wait.completed }}"
+      - choose:
+          - conditions: "{{ not manual_pass }}"
+            sequence:
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "AUTO"
+                  qos: 1
+                  retain: false
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step5
+                  title: "GEN24 shadowdiagnostik steg 5: FAIL"
+                  message: "MANUAL kunde inte verifieras. AUTO begärdes; inget effekt-topic skickades."
+              - stop: "MANUAL mode verification failed"
+
+      # A distinct watt value ensures the first command is not the previous
+      # test's duplicate, even within the firmware's 60-second dedupe window.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontroldischarge"
+          payload: "1379"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/shadow/decision"
+            value_template: >-
+              {{ [value_json.outcome | default(''),
+                  value_json.effective_action | default(''),
+                  value_json.effective_w | int(0) | string,
+                  value_json.writes_executed | string | lower] | join('|') }}
+            payload: "SIMULATED|DISCHARGE_FORCE|1379|false"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          first_decision_pass: "{{ wait.completed }}"
+      - choose:
+          - conditions: "{{ not first_decision_pass }}"
+            sequence:
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "AUTO"
+                  qos: 1
+                  retain: false
+              - service: persistent_notification.create
+                data:
+                  notification_id: gen24_shadow_diagnostics_step5
+                  title: "GEN24 shadowdiagnostik steg 5: FAIL"
+                  message: "Första kommandot blev inte SIMULATED. AUTO begärdes; dublett skickades inte."
+              - stop: "First simulated command failed"
+
+      # Capture retained pseudo state after the first command.
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/pseudo_write/modbus"
+        timeout: "00:00:05"
+        continue_on_timeout: true
+      - variables:
+          pseudo_key_before_duplicate: >-
+            {{ (((wait.trigger.payload | from_json).boot_id | default('legacy') | string)
+                ~ ':' ~ ((wait.trigger.payload | from_json).sequence | int(0) | string))
+               if wait.completed else 'none:0' }}
+
+      # Immediate identical duplicate must be blocked before pseudo writes.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/forcecontroldischarge"
+          payload: "1379"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/shadow/decision"
+            value_template: >-
+              {{ [value_json.outcome | default(''),
+                  value_json.blocked_by | default(''),
+                  value_json.effective_action | default(''),
+                  value_json.effective_w | int(0) | string] | join('|') }}
+            payload: "BLOCKED|duplicate_intent|DISCHARGE_FORCE|1379"
+        timeout: "00:00:10"
+        continue_on_timeout: true
+      - variables:
+          duplicate_blocked_pass: "{{ wait.completed }}"
+      - delay: "00:00:02"
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/pseudo_write/modbus"
+        timeout: "00:00:05"
+        continue_on_timeout: true
+      - variables:
+          pseudo_key_after_duplicate: >-
+            {{ (((wait.trigger.payload | from_json).boot_id | default('legacy') | string)
+                ~ ':' ~ ((wait.trigger.payload | from_json).sequence | int(0) | string))
+               if wait.completed else 'none:0' }}
+          no_new_pseudo_pass: >-
+            {{ wait.completed
+               and pseudo_key_before_duplicate != 'none:0'
+               and pseudo_key_after_duplicate == pseudo_key_before_duplicate }}
+
+      # Always restore AUTO after comparison.
+      - service: mqtt.publish
+        data:
+          topic: "gen24_shadow/set_control_mode"
+          payload: "AUTO"
+          qos: 1
+          retain: false
+      - wait_for_trigger:
+          - platform: mqtt
+            topic: "gen24_shadow/sensor/control_mode"
+            payload: "AUTO"
+        timeout: "00:00:15"
+        continue_on_timeout: true
+      - variables:
+          restore_pass: "{{ wait.completed }}"
+          all_passed: >-
+            {{ manual_pass and first_decision_pass and duplicate_blocked_pass
+               and no_new_pseudo_pass and restore_pass }}
+      - service: persistent_notification.create
+        data:
+          notification_id: gen24_shadow_diagnostics_step5
+          title: "GEN24 shadowdiagnostik steg 5: {{ 'PASS' if all_passed else 'FAIL' }}"
+          message: >-
+            {{ 'PASS' if all_passed else 'FAIL' }} |
+            preflight=PASS, manual={{ manual_pass }}, first_simulated={{ first_decision_pass }},
+            duplicate_blocked={{ duplicate_blocked_pass }},
+            no_new_pseudo={{ no_new_pseudo_pass }}
+            ({{ pseudo_key_before_duplicate }} -> {{ pseudo_key_after_duplicate }}),
+            restore_auto={{ restore_pass }}.

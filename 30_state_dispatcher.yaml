@@ -1,0 +1,201 @@
+# =============================================================================
+# 30_state_dispatcher.yaml  —  skicka beslut till shadow (read-only test)
+# =============================================================================
+# AKTIVERAS INTE AUTOMATISKT. Automationen ar inaktiv (initial_state: false)
+# tills utvarderingen visar att state machine besluten ar stabila.
+#
+# Logik:
+#   - Decision = AUTO                  -> skicka AUTO till control_mode
+#   - Decision = MANUAL / normal state -> skicka MANUAL + motsvarande action
+#   - Decision = DATA_QUALITY_REJECT   -> skicka INGET (HOLD)
+#   - Decision = DATA_QUALITY_REJECT > 60 s -> Safe state: MANUAL IDLE 0W
+#
+# Topics (shadow):
+#   gen24_shadow/set_control_mode        (AUTO/MANUAL)
+#   gen24_shadow/forcecontrolcharge      (watt, stran, t.ex. "2000")
+#   gen24_shadow/forcecontroldischarge   (watt, stran, t.ex. "2000")
+#
+# Pseudo-writes verifieras i topic gen24_shadow/shadow/decision.
+# =============================================================================
+
+input_datetime:
+  gen24_dispatcher_reject_start:
+    name: "GEN24 Dispatcher Reject Start"
+    has_date: true
+    has_time: true
+
+input_number:
+  gen24_dispatcher_reject_hold_s:
+    name: "Dispatcher reject hold time"
+    icon: mdi:timer-sand
+    min: 0
+    max: 300
+    step: 10
+    unit_of_measurement: "s"
+    initial: 60
+
+input_boolean:
+  gen24_dispatcher_enabled:
+    name: "GEN24 Dispatcher Enabled"
+    icon: mdi:toggle-switch
+    initial: false
+
+input_text:
+  gen24_dispatcher_log:
+    name: "GEN24 Dispatcher Log"
+    icon: mdi:send-check
+    max: 255
+    initial: ""
+
+automation:
+  - id: gen24_state_dispatcher
+    alias: "GEN24 State Dispatcher"
+    description: Skickar state machine-beslut till shadow (inaktiv tills vidare).
+    initial_state: false
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: sensor.gen24_state_decision
+        not_to:
+          - "unavailable"
+          - "unknown"
+      - platform: time_pattern
+        seconds: "/30"
+    condition:
+      - condition: state
+        entity_id: input_boolean.gen24_dispatcher_enabled
+        state: "on"
+    action:
+      - variables:
+          decision: "{{ states('sensor.gen24_state_decision') }}"
+          action: "{{ state_attr('sensor.gen24_state_decision', 'action') }}"
+          power_w: "{{ state_attr('sensor.gen24_state_decision', 'power_w') | int(0) }}"
+          reject_hold: "{{ states('input_number.gen24_dispatcher_reject_hold_s') | int(60) }}"
+
+      - choose:
+          - conditions: "{{ decision == 'DATA_QUALITY_REJECT' }}"
+            sequence:
+              - choose:
+                  - conditions: "{{ states('input_datetime.gen24_dispatcher_reject_start') in ['unknown','unavailable','none',''] }}"
+                    sequence:
+                      - service: input_datetime.set_datetime
+                        target:
+                          entity_id: input_datetime.gen24_dispatcher_reject_start
+                        data:
+                          datetime: "{{ now() }}"
+                  - conditions: >-
+                      {% set start = states('input_datetime.gen24_dispatcher_reject_start') %}
+                      {% if start in ['unknown','unavailable','none',''] %}
+                        false
+                      {% else %}
+                        {{ (now().timestamp() - as_timestamp(start)) > reject_hold }}
+                      {% endif %}
+                    sequence:
+                      - service: mqtt.publish
+                        data:
+                          topic: "gen24_shadow/set_control_mode"
+                          payload: "MANUAL"
+                          qos: 1
+                          retain: false
+                      - delay: "00:00:01"
+                      - service: mqtt.publish
+                        data:
+                          topic: "gen24_shadow/forcecontroldischarge"
+                          payload: "0"
+                          qos: 1
+                          retain: false
+
+          - conditions: "{{ decision == 'AUTO' }}"
+            sequence:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.gen24_dispatcher_reject_start
+                data:
+                  datetime: "1970-01-01 00:00:00"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "AUTO"
+                  qos: 1
+                  retain: false
+
+          - conditions: "{{ action == 'IDLE' }}"
+            sequence:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.gen24_dispatcher_reject_start
+                data:
+                  datetime: "1970-01-01 00:00:00"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "MANUAL"
+                  qos: 1
+                  retain: false
+              - delay: "00:00:01"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/forcecontroldischarge"
+                  payload: "0"
+                  qos: 1
+                  retain: false
+
+          - conditions: "{{ action == 'CHARGE' and power_w > 0 }}"
+            sequence:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.gen24_dispatcher_reject_start
+                data:
+                  datetime: "1970-01-01 00:00:00"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "MANUAL"
+                  qos: 1
+                  retain: false
+              - delay: "00:00:01"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/forcecontrolcharge"
+                  payload: "{{ power_w }}"
+                  qos: 1
+                  retain: false
+
+          - conditions: "{{ action == 'DISCHARGE' and power_w > 0 }}"
+            sequence:
+              - service: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.gen24_dispatcher_reject_start
+                data:
+                  datetime: "1970-01-01 00:00:00"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/set_control_mode"
+                  payload: "MANUAL"
+                  qos: 1
+                  retain: false
+              - delay: "00:00:01"
+              - service: mqtt.publish
+                data:
+                  topic: "gen24_shadow/forcecontroldischarge"
+                  payload: "{{ power_w }}"
+                  qos: 1
+                  retain: false
+
+  - id: gen24_dispatcher_logger
+    alias: "GEN24 Dispatcher Logger"
+    description: Loggar dispatcher-handelser via MQTT shadow/decision.
+    initial_state: false
+    mode: queued
+    trigger:
+      - platform: mqtt
+        topic: "gen24_shadow/shadow/decision"
+    condition:
+      - condition: state
+        entity_id: input_boolean.gen24_dispatcher_enabled
+        state: "on"
+    action:
+      - service: input_text.set_value
+        data_template:
+          entity_id: input_text.gen24_dispatcher_log
+          value: "{{ now().strftime('%H:%M:%S') }} {{ trigger.payload[:120] }}"

@@ -1,0 +1,95 @@
+# ==============================================================================
+# PS_15: PRISJÄMFÖRELSE KVARTSPRIS vs TIMPRIS (2026-08)
+# ------------------------------------------------------------------------------
+# Räknar hur många 15-min-kvartar per dygn där kvartspriset är billigare/dyrare
+# än Nordpool timpris. Nollställs automatiskt vid midnatt.
+# ==============================================================================
+
+template:
+  # --------------------------------------------------------------------------
+  # Trigger-baserade räknare — uppdateras varje gång gen24_spot_price ändras
+  # (dvs var 15:e min, eller när priset ändras). State = antalet kvartar
+  # sedan senaste midnatt där villkoret var sant.
+  # --------------------------------------------------------------------------
+  - trigger:
+      - platform: state
+        entity_id: sensor.gen24_spot_price
+      # Nollställ vid midnatt (ny dag börjar)
+      - platform: time
+        at: "00:00:00"
+    sensor:
+      # --------------------------------------------------------------------
+      # Antal kvartar där kvartspriset var BILLIGARE än timpriset (idag)
+      # --------------------------------------------------------------------
+      - name: "GEN24 Quarter Cheaper Count"
+        unique_id: gen24_quarter_cheaper_count
+        unit_of_measurement: "kvartar"
+        icon: mdi:cash-minus
+        state: >
+          {% set midnight = trigger.platform == 'time' %}
+          {% if midnight %}
+            0
+          {% else %}
+            {% set cheaper = state_attr('sensor.gen24_spot_price','quarter_cheaper') | default(false) %}
+            {% set prev = states('sensor.gen24_quarter_cheaper_count') | int(0) %}
+            {{ prev + 1 if cheaper else prev }}
+          {% endif %}
+        attributes:
+          senaste_nollstallning: >
+            {% set midnight = trigger.platform == 'time' %}
+            {{ now().isoformat() if midnight else state_attr('sensor.gen24_quarter_cheaper_count','senaste_nollstallning') }}
+
+      # --------------------------------------------------------------------
+      # Antal kvartar där kvartspriset var DYRARE/LIKA än timpriset (idag)
+      # --------------------------------------------------------------------
+      - name: "GEN24 Quarter Not Cheaper Count"
+        unique_id: gen24_quarter_not_cheaper_count
+        unit_of_measurement: "kvartar"
+        icon: mdi:cash-plus
+        state: >
+          {% set midnight = trigger.platform == 'time' %}
+          {% if midnight %}
+            0
+          {% else %}
+            {% set cheaper = state_attr('sensor.gen24_spot_price','quarter_cheaper') | default(false) %}
+            {% set prev = states('sensor.gen24_quarter_not_cheaper_count') | int(0) %}
+            {{ prev + 1 if not cheaper else prev }}
+          {% endif %}
+        attributes:
+          senaste_nollstallning: >
+            {% set midnight = trigger.platform == 'time' %}
+            {{ now().isoformat() if midnight else state_attr('sensor.gen24_quarter_not_cheaper_count','senaste_nollstallning') }}
+
+  # --------------------------------------------------------------------------
+  # SAMMANFATTNING — historisk statistik + andel billigare kvartar (%)
+  # --------------------------------------------------------------------------
+  - sensor:
+      - name: "GEN24 Quarter Price Comparison Summary"
+        unique_id: gen24_quarter_price_comparison_summary
+        icon: mdi:chart-line
+        state: >
+          {% set cheaper = states('sensor.gen24_quarter_cheaper_count') | int(0) %}
+          {% set not_cheaper = states('sensor.gen24_quarter_not_cheaper_count') | int(0) %}
+          {% set total = cheaper + not_cheaper %}
+          {% if total > 0 %}
+            {{ (100 * cheaper / total) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        unit_of_measurement: "%"
+        attributes:
+          cheaper_count: "{{ states('sensor.gen24_quarter_cheaper_count') | int(0) }}"
+          not_cheaper_count: "{{ states('sensor.gen24_quarter_not_cheaper_count') | int(0) }}"
+          total_count: >
+            {% set c = states('sensor.gen24_quarter_cheaper_count') | int(0) %}
+            {% set nc = states('sensor.gen24_quarter_not_cheaper_count') | int(0) %}
+            {{ c + nc }}
+          # Genomsnittlig besparing när kvartspriset är billigare (SEK/kWh)
+          avg_delta_when_cheaper: >
+            {% set delta = state_attr('sensor.gen24_spot_price','delta_sek') | float(0) %}
+            {% set cheaper = state_attr('sensor.gen24_spot_price','quarter_cheaper') | default(false) %}
+            {{ delta if cheaper else 'N/A' }}
+          explanation: >
+            State = andel av dagens kvartar där kvartspriset var billigare än
+            timpriset (%). cheaper_count = antal billigare kvartar, not_cheaper_count
+            = antal dyrare/lika kvartar.

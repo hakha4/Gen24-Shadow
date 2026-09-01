@@ -1,0 +1,178 @@
+# =============================================================================
+# ps_02_economy_hub.yaml  —  sensor.gen24_economy_hub
+# =============================================================================
+# Central EKONOMI-domän-sensor. Samlar ALL kostnad/intäkt på EN plats:
+# dygns- och månadskostnad för köpt el, intäkt för såld el, nettobelopp,
+# aktuella kostnadstakter, effekttoppskostnad och självförsörjningsgrad.
+#
+#   State = day_net_cost_sek  (dagens NETTO nätkostnad = köp − sälj, SEK).
+#           Positivt = du har betalat netto idag; negativt = du har tjänat.
+#
+# Alla belopp: SEK. Takter: SEK/h. Andelar: %.
+#
+# Kostnaderna byggs upp av integration + utility_meter i
+# gen24_price_provider.yaml:
+#   gen24_grid_cost_rate (SEK/h) → integreras → gen24_grid_cost_total (SEK)
+#   → utility_meter delar upp i dygn (day_grid_cost) och månad (month_grid_cost).
+#   Månadscykeln nollställs den 1:a → direkt jämförbar med elräkningen.
+#
+# READ-ONLY: ändrar ingenting i systemet. Additiv.
+#
+# AUTOMATIONER OCH DASHBOARD SKA LÄSA HÄRIFRÅN:
+#   state_attr('sensor.gen24_economy_hub', '<attributnamn>')
+#
+# Tillgängliga attribut — se legend-attributet längst ner.
+# =============================================================================
+
+template:
+  - sensor:
+      - name: "GEN24 Economy Hub"
+        unique_id: gen24_economy_hub
+        unit_of_measurement: "SEK"
+        device_class: monetary
+        state_class: total
+        icon: >-
+          {% set net = states('sensor.gen24_day_net_cost') | float(0) %}
+          {% if net < 0 %}mdi:cash-plus
+          {% elif net > 0 %}mdi:cash-minus
+          {% else %}mdi:cash{% endif %}
+
+        availability: >-
+          {{ states('sensor.gen24_day_grid_cost') not in ['unknown','unavailable','none','']
+             or states('sensor.gen24_day_grid_revenue') not in ['unknown','unavailable','none',''] }}
+
+        state: >-
+          {% set c = states('sensor.gen24_day_grid_cost')    | float(none) %}
+          {% set r = states('sensor.gen24_day_grid_revenue') | float(none) %}
+          {% if c is not none and r is not none %}
+            {{ (c - r) | round(2) }}
+          {% elif c is not none %}
+            {{ c | round(2) }}
+          {% else %}
+            {{ 0.0 }}
+          {% endif %}
+
+        attributes:
+
+          # ================================================================
+          # DYGN (SEK) — nollställs vid midnatt
+          # ================================================================
+
+          day_grid_cost_sek: >-
+            {{ states('sensor.gen24_day_grid_cost') | float(-1) | round(2) }}
+
+          day_grid_revenue_sek: >-
+            {{ states('sensor.gen24_day_grid_revenue') | float(-1) | round(2) }}
+
+          day_net_cost_sek: >-
+            {% set c = states('sensor.gen24_day_grid_cost')    | float(none) %}
+            {% set r = states('sensor.gen24_day_grid_revenue') | float(none) %}
+            {% if c is not none and r is not none %}
+              {{ (c - r) | round(2) }}
+            {% else %}
+              {{ -1 }}
+            {% endif %}
+
+          # ================================================================
+          # MÅNAD (SEK) — nollställs den 1:a, jämför med elfaktura
+          # ================================================================
+
+          month_grid_cost_sek: >-
+            {{ states('sensor.gen24_month_grid_cost') | float(-1) | round(2) }}
+
+          month_grid_revenue_sek: >-
+            {{ states('sensor.gen24_month_grid_revenue') | float(-1) | round(2) }}
+
+          month_net_cost_sek: >-
+            {% set c = states('sensor.gen24_month_grid_cost')    | float(none) %}
+            {% set r = states('sensor.gen24_month_grid_revenue') | float(none) %}
+            {% if c is not none and r is not none %}
+              {{ (c - r) | round(2) }}
+            {% else %}
+              {{ -1 }}
+            {% endif %}
+
+          # ================================================================
+          # AKTUELLA TAKTER (SEK/h) — momentan kostnad/intäkt just nu
+          # ================================================================
+
+          cost_rate_sek_h: >-
+            {{ states('sensor.gen24_grid_cost_rate') | float(-1) | round(3) }}
+
+          revenue_rate_sek_h: >-
+            {{ states('sensor.gen24_grid_revenue_rate') | float(-1) | round(3) }}
+
+          net_rate_sek_h: >-
+            {% set c = states('sensor.gen24_grid_cost_rate')    | float(none) %}
+            {% set r = states('sensor.gen24_grid_revenue_rate') | float(none) %}
+            {% if c is not none and r is not none %}
+              {{ (c - r) | round(3) }}
+            {% else %}
+              {{ -1 }}
+            {% endif %}
+
+          # ================================================================
+          # EFFEKTTARIFF (effekttopp) — SEK
+          # ================================================================
+
+          monthly_peak_cost_sek: >-
+            {{ states('sensor.gen24_monthly_peak_cost') | float(-1) | round(2) }}
+
+          monthly_peak_max_kw: >-
+            {{ states('sensor.gen24_monthly_peak_max') | float(-1) | round(2) }}
+
+          # Total förväntad månadskostnad = energinetto + effekttariff.
+          month_total_estimate_sek: >-
+            {% set net  = states('sensor.gen24_month_net_cost')   | float(none) %}
+            {% set peak = states('sensor.gen24_monthly_peak_cost') | float(none) %}
+            {% if net is not none and peak is not none %}
+              {{ (net + peak) | round(2) }}
+            {% else %}
+              {{ -1 }}
+            {% endif %}
+
+          # ================================================================
+          # SJÄLVFÖRSÖRJNING (%) — dygn
+          # ================================================================
+
+          self_sufficiency_pct: >-
+            {{ states('sensor.gen24_self_sufficiency_daily') | float(-1) | round(1) }}
+
+          self_consumption_pct: >-
+            {{ states('sensor.gen24_self_consumption_daily') | float(-1) | round(1) }}
+
+          # ================================================================
+          # STATUS-FLAGGOR
+          # ================================================================
+
+          is_day_net_positive: >-
+            {% set v = states('sensor.gen24_day_net_cost') | float(none) %}
+            {{ v is not none and v > 0 }}
+
+          is_earning_now: >-
+            {% set c = states('sensor.gen24_grid_cost_rate')    | float(none) %}
+            {% set r = states('sensor.gen24_grid_revenue_rate') | float(none) %}
+            {{ c is not none and r is not none and (r - c) > 0 }}
+
+          # ================================================================
+          # FÖRKLARING
+          # ================================================================
+          legend: >-
+            STATE (SEK) = day_net_cost_sek, dagens nettonätkostnad (köp − sälj).
+            Positivt = betalat netto idag; negativt = tjänat netto.
+            day_grid_cost_sek    = Kostnad köpt el idag (nollställs midnatt).
+            day_grid_revenue_sek = Intäkt såld el idag.
+            day_net_cost_sek     = Netto idag = köp − sälj (samma som state).
+            month_grid_cost_sek    = Kostnad köpt el denna månad (nollställs 1:a).
+            month_grid_revenue_sek = Intäkt såld el denna månad.
+            month_net_cost_sek     = Netto denna månad = köp − sälj.
+            cost_rate_sek_h    = Momentan kostnadstakt just nu (SEK/h).
+            revenue_rate_sek_h = Momentan intäktstakt just nu (SEK/h).
+            net_rate_sek_h     = Netto momentan takt = kostnad − intäkt (SEK/h).
+            monthly_peak_cost_sek = Effekttariffkostnad denna månad (peak1 × tariff).
+            monthly_peak_max_kw   = Högsta registrerade effekttopp denna månad (kW).
+            month_total_estimate_sek = month_net_cost + monthly_peak_cost (uppskattad total).
+            self_sufficiency_pct = Andel av förbrukning täckt utan nätimport idag (%).
+            self_consumption_pct = Andel av produktion använd själv istället för export idag (%).
+            is_day_net_positive = True om du netto betalat pengar idag.
+            is_earning_now      = True om intäktstakten just nu överstiger kostnadstakten.

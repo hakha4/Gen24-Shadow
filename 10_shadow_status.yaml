@@ -1,0 +1,105 @@
+# =============================================================================
+# 10_shadow_status.yaml  —  GEN24 Shadow-status (read-only, additiv)
+# =============================================================================
+# Kompletterar den rena instansen (.123) med de MQTT-varden som saknas
+# (conn_status, operating_mode, modbus_writes_enabled) och en sammanfattande
+# hälsosensor. Anvander template-trigger pa MQTT-topics (som
+# gen24_shadow_policy_observer) - det fungerar i paket utan MQTT-discovery.
+# Skickar inga kommandon.
+#
+# De 5 diagnostikskripten finns redan i packages/gen24_scripts.yaml - de
+# dupliceras INTE har.
+#
+#   sensor.gen24_shadow_status  State = OK / STALE / OFFLINE / UNKNOWN
+#     OK      : online, SHADOW_READ_ONLY, modbus-writes avstangda
+#     STALE   : online men inte i read-only-lage (varning)
+#     OFFLINE : conn_status saknas/ej Online
+#     UNKNOWN : ingen data annu
+# =============================================================================
+
+template:
+  - trigger:
+      - platform: mqtt
+        topic: "gen24_shadow/conn_status"
+        id: conn
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/operating_mode"
+        id: mode
+      - platform: mqtt
+        topic: "gen24_shadow/sensor/modbus_writes_enabled"
+        id: writes
+      - platform: time_pattern
+        minutes: "/1"
+        id: clock
+    sensor:
+      - name: "GEN24 Shadow Conn Status"
+        unique_id: gen24_shadow_conn_status
+        icon: mdi:lan-connect
+        state: >-
+          {% if trigger.id == 'conn' %}
+            {{ trigger.payload | trim }}
+          {% else %}
+            {{ this.state }}
+          {% endif %}
+        attributes:
+          last_update: "{{ now().isoformat() }}"
+
+      - name: "GEN24 Shadow Operating Mode"
+        unique_id: gen24_shadow_operating_mode
+        icon: mdi:state-machine
+        state: >-
+          {% if trigger.id == 'mode' %}
+            {{ trigger.payload | trim }}
+          {% else %}
+            {{ this.state }}
+          {% endif %}
+        attributes:
+          last_update: "{{ now().isoformat() }}"
+
+      - name: "GEN24 Shadow Modbus Writes Enabled"
+        unique_id: gen24_shadow_modbus_writes_enabled
+        icon: mdi:shield-lock
+        state: >-
+          {% if trigger.id == 'writes' %}
+            {{ trigger.payload | trim | lower }}
+          {% else %}
+            {{ this.state }}
+          {% endif %}
+        attributes:
+          last_update: "{{ now().isoformat() }}"
+
+  - sensor:
+      - name: "GEN24 Shadow Status"
+        unique_id: gen24_shadow_status
+        icon: >-
+          {% set s = this.state %}
+          {% if s == 'OK' %}mdi:shield-check-outline
+          {% elif s == 'STALE' %}mdi:shield-alert-outline
+          {% elif s == 'OFFLINE' %}mdi:shield-off-outline
+          {% else %}mdi:shield-question-outline{% endif %}
+
+        state: >-
+          {% set conn = states('sensor.gen24_shadow_conn_status') %}
+          {% set mode = states('sensor.gen24_shadow_operating_mode') %}
+          {% set writes = states('sensor.gen24_shadow_modbus_writes_enabled') | lower %}
+          {% if conn in ['unknown','unavailable','none',''] %}
+            UNKNOWN
+          {% elif conn != 'Online' %}
+            OFFLINE
+          {% elif mode == 'SHADOW_READ_ONLY' and writes in ['0','false'] %}
+            OK
+          {% else %}
+            STALE
+          {% endif %}
+
+        attributes:
+          conn_status: >-
+            {{ states('sensor.gen24_shadow_conn_status') | default('unknown') }}
+          operating_mode: >-
+            {{ states('sensor.gen24_shadow_operating_mode') | default('unknown') }}
+          modbus_writes_enabled: >-
+            {{ states('sensor.gen24_shadow_modbus_writes_enabled') | default('unknown') }}
+          last_decision: >-
+            {{ states('sensor.gen24_shadow_summary') | default('none') }}
+          last_policy: >-
+            {{ states('sensor.gen24_shadow_policy_observer') | default('none') }}
