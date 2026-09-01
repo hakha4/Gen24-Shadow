@@ -118,7 +118,7 @@ template:
               IDLE
             {% else %}
               {% set ns = namespace(candidates=[]) %}
-              {# --- PEAK_SHAVE (80) --- %}
+              {# --- PEAK_SHAVE (80) --- #}
               {% set limit_kw = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
               {% set margin_kw = states('input_number.gen24_peak_margin_kw') | float(0.30) %}
               {% set soc_min = states('input_number.gen24_soc_min_safe') | float(15) %}
@@ -127,7 +127,7 @@ template:
               {% if manuell and limit_kw > 0 and grid_import_kw > target_kw and soc > soc_min %}
                 {% set ns.candidates = ns.candidates + [(80, 'PEAK_SHAVE')] %}
               {% endif %}
-              {# --- EXPORT (75) --- %}
+              {# --- EXPORT (75) --- #}
               {% set sell_price = states('sensor.gen24_sell_price') | float(-999) %}
               {% set sell_thr = states('sensor.gen24_sell_threshold') | float(-999) %}
               {% set expensive_thr = states('input_number.gen24_price_expensive_threshold_sek') | float(0.80) %}
@@ -151,7 +151,7 @@ template:
               {% if manuell and daytime and sell_attractive and export_score >= 55 and export_edge >= 8 and soc > reserve_gate and sched_risk < 80 and not ev_wants_charge %}
                 {% set ns.candidates = ns.candidates + [(75, 'EXPORT')] %}
               {% endif %}
-              {# --- SELF_CONS_DAY (72) --- %}
+              {# --- SELF_CONS_DAY (72) --- #}
               {% set selfcons_on = is_state('input_boolean.gen24_selfcons_enabled', 'on') %}
               {% set soc_target = states('sensor.gen24_dynamic_target_soc') | float(80) %}
               {% set reserve_floor = states('sensor.gen24_active_reserve_floor') | float(soc_min) %}
@@ -172,7 +172,7 @@ template:
               {% if manuell and selfcons_on and daytime and soc > selfcons_floor and grid_import_w >= min_import_w %}
                 {% set ns.candidates = ns.candidates + [(72, 'SELF_CONS_DAY')] %}
               {% endif %}
-              {# --- NIGHT_BATTERY (70) --- %}
+              {# --- NIGHT_BATTERY (70) --- #}
               {% set night_trig = states('input_number.gen24_night_discharge_soc_trigger') | float(60) %}
               {% set night_target = states('input_number.gen24_night_discharge_target_soc') | float(40) %}
               {% set night_solar_min = states('input_number.gen24_night_solar_min_kwh') | float(4) %}
@@ -181,18 +181,18 @@ template:
               {% if manuell and not daytime and night_charging and soc > night_trig and soc > night_target and pv_tomorrow_kwh >= night_solar_min %}
                 {% set ns.candidates = ns.candidates + [(70, 'NIGHT_BATTERY')] %}
               {% endif %}
-              {# --- SELF_CONS_NIGHT (66) --- %}
+              {# --- SELF_CONS_NIGHT (66) --- #}
               {% if manuell and selfcons_on and not daytime and soc > selfcons_floor and grid_import_w >= min_import_w %}
                 {% set ns.candidates = ns.candidates + [(66, 'SELF_CONS_NIGHT')] %}
               {% endif %}
-              {# --- SOLAR_CHARGE (64) --- %}
+              {# --- SOLAR_CHARGE (64) --- #}
               {% set soc_max = states('input_number.gen24_solar_charge_soc_max') | float(95) %}
               {% set export_w = states('sensor.gen24_grid_export_power') | float(0) %}
               {% set solar_min_w = states('input_number.gen24_solar_export_min_w') | int(150) %}
               {% if manuell and daytime and soc < soc_max and export_w >= solar_min_w %}
                 {% set ns.candidates = ns.candidates + [(64, 'SOLAR_CHARGE')] %}
               {% endif %}
-              {# --- CHARGE_CHEAP (60) --- %}
+              {# --- CHARGE_CHEAP (60) --- #}
               {% set charge_thr = states('sensor.gen24_charge_threshold') %}
               {% set cheap_th = (charge_thr | float) if charge_thr not in ['unknown','unavailable','none',''] else (states('input_number.gen24_price_cheap_threshold_sek') | float(0.50)) %}
               {% set charge_target = states('sensor.gen24_charge_target_soc') | float(dyn_target) %}
@@ -206,7 +206,7 @@ template:
               {% if manuell and fast and soc < charge_target and price_is_cheap and charge_bias >= 20 %}
                 {% set ns.candidates = ns.candidates + [(60, 'CHARGE_CHEAP')] %}
               {% endif %}
-              {# --- DAYTIME_SMART (60) --- %}
+              {# --- DAYTIME_SMART (60) --- #}
               {% set very_cheap_ratio = states('input_number.gen24_price_very_cheap_ratio') | float(0.50) %}
               {% set price_is_very_cheap = nordpool >= 0 and nordpool < (expensive_thr * very_cheap_ratio) %}
               {% set fc_remaining = states('sensor.gen24_forecast_remaining_kwh') | float(0) %}

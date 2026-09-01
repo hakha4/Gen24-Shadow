@@ -581,6 +581,18 @@ sensor:
     max_sub_interval:
       minutes: 5
 
+  # Statistics-sensor: 2-minuters glidande medel av natimport (peak-filter)
+  # Portad fran produktionens ps_03_sensors_statistics.yaml
+  - platform: statistics
+    name: "Gen24 Grid Import 2min Mean"
+    unique_id: gen24_grid_import_2min_mean
+    entity_id: sensor.gen24_grid_import_power
+    state_characteristic: mean
+    max_age:
+      minutes: 2
+    sampling_size: 60
+    precision: 0
+
 utility_meter:
   # Diagnostic daily totals. SFML's current panel-group config flow does NOT
   # accept these kWh entities in group_1_sensor/group_2_sensor; use the W aliases.
@@ -596,18 +608,3 @@ utility_meter:
     source: sensor.gen24_mppt2_integrated_energy
     cycle: daily
 
-
-# -----------------------------------------------------------------------------
-# Statistics-sensor: 2-minuters glidande medel av natimport (peak-filter)
-# Portad fran produktionens ps_03_sensors_statistics.yaml
-# -----------------------------------------------------------------------------
-sensor:
-  - platform: statistics
-    name: "Gen24 Grid Import 2min Mean"
-    unique_id: gen24_grid_import_2min_mean
-    entity_id: sensor.gen24_grid_import_power
-    state_characteristic: mean
-    max_age:
-      minutes: 2
-    sampling_size: 60
-    precision: 0
