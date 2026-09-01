@@ -1,0 +1,87 @@
+# =============================================================================
+# lovelace_planning_sensors.yaml
+# =============================================================================
+# Visualisering av de 10 planeringssensorerna portade från .161
+# (ps_20_planning_sensors.yaml)
+# =============================================================================
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      ## 📊 Planning Sensors (portade från .161)
+      Ekonomi, peak-hantering och batterioptimering.
+
+  # ====================================================================
+  # EKONOMI & VÄRDERING
+  # ====================================================================
+  - type: entities
+    title: Ekonomi & Värdering
+    show_header_toggle: false
+    entities:
+      - entity: sensor.gen24_export_value_now
+        name: Export-värde nu
+        icon: mdi:cash-plus
+      
+      - entity: sensor.gen24_battery_marginal_value
+        name: Batteri marginalvärde
+        icon: mdi:battery-charging
+      
+      - entity: sensor.gen24_battery_value_score
+        name: Batteri value score
+        icon: mdi:star
+      
+      - entity: sensor.gen24_effective_battery_value
+        name: Effektivt batterivärde
+        icon: mdi:battery-heart-variant
+
+  # ====================================================================
+  # PEAK-HANTERING
+  # ====================================================================
+  - type: entities
+    title: Peak-hantering
+    show_header_toggle: false
+    entities:
+      - entity: sensor.gen24_peak_limit_active_kw
+        name: Aktivt peak-limit (kW)
+        icon: mdi:transmission-tower
+      
+      - entity: sensor.gen24_peak_reserve_soc
+        name: Peak reserve SOC (%)
+        icon: mdi:battery-alert
+      
+      - entity: sensor.gen24_grid_import_2min_mean
+        name: Import 2min medel (kW)
+        icon: mdi:flash
+
+  # ====================================================================
+  # SCHEMALÄGGNING & TARIFF
+  # ====================================================================
+  - type: entities
+    title: Schemaläggning & Tariff
+    show_header_toggle: false
+    entities:
+      - entity: sensor.gen24_scheduled_load_risk
+        name: Scheduled Load Risk
+        icon: mdi:alert-circle
+      
+      - entity: sensor.gen24_active_reserve_floor
+        name: Active Reserve Floor (%)
+        icon: mdi:gauge-low
+      
+      - entity: sensor.gen24_tariff_period
+        name: Tariffperiod
+        icon: mdi:calendar-clock
+
+  # ====================================================================
+  # DIAGNOSTIK
+  # ====================================================================
+  - type: markdown
+    content: |
+      ### Status-check
+      
+      **PEAK_SHAVE guard:** {{ 'Aktiv ✅' if states('sensor.gen24_peak_limit_active_kw') not in ['0.0', '0', 'unavailable', 'unknown'] else 'Död ⚠️ (peak_limit = 0)' }}
+      
+      **EXPORT guard:** {{ 'Aktiv ✅' if states('sensor.gen24_export_value_now') not in ['0.0', '0', 'unavailable', 'unknown'] else 'Död ⚠️ (export_value = 0)' }}
+      
+      **Forecast-beroende guards:** {{ 'Evaluerbara ✅' if states('sensor.gen24_forecast_remaining_kwh') not in ['-1', 'unavailable', 'unknown'] else 'Inaktiva ⚠️ (forecast = -1)' }}

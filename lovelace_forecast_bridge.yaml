@@ -1,0 +1,51 @@
+# =============================================================================
+# lovelace_forecast_bridge.yaml
+# =============================================================================
+# Visualisering av forecast-bryggan .161 → .123
+# Klistra in i Lovelace (raw config editor) eller som Custom card.
+# =============================================================================
+
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      ## 🌤️ Forecast Bridge (.161 → .123)
+      Live prognos från produktion via MQTT.
+
+  - type: entities
+    title: Forecast-sensorer
+    show_header_toggle: false
+    entities:
+      - entity: sensor.gen24_forecast_remaining_kwh
+        name: Återstående idag (kWh)
+        icon: mdi:solar-power
+      
+      - entity: sensor.gen24_forecast_tomorrow_kwh
+        name: Prognos imorgon (kWh)
+        icon: mdi:weather-sunny
+      
+      - entity: sensor.gen24_forecast_next_hour_kwh
+        name: Nästa timme (kWh)
+        icon: mdi:clock-outline
+      
+      - entity: sensor.gen24_solar_forecast_score
+        name: Forecast Score
+        icon: mdi:percent
+
+  - type: markdown
+    content: |
+      **Status:** {{ 'Aktiv ✅' if states('sensor.gen24_forecast_remaining_kwh') not in ['-1', 'unavailable', 'unknown'] else 'Inaktiv ⚠️' }}
+      
+      **Senaste uppdatering:** {{ relative_time(states.sensor.gen24_forecast_remaining_kwh.last_changed) }} sedan
+
+  - type: conditional
+    conditions:
+      - entity: sensor.gen24_forecast_remaining_kwh
+        state: '-1'
+    card:
+      type: markdown
+      content: |
+        ⚠️ **Bryggan är inaktiv**
+        
+        Aktivera publicerings-automationen på .161:
+        `Settings → Automations → "Publicera forecast till shadow .123"`
