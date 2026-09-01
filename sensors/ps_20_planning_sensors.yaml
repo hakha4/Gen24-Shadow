@@ -1,0 +1,613 @@
+# =============================================================================
+# sensors/ps_20_planning_sensors.yaml
+# =============================================================================
+# PORTERADE PLANERINGSSENSORER (fran produktion .161 -> shadow .123)
+#
+# Dessa sensorer kravs av 20_state_machine.yaml for att guardsen for
+# PEAK_SHAVE och EXPORT ska kunna utvarderas. Utan dem foll de tillbaka pa
+# float(0)-defaults -> guardsen var permanent inaktiva och de tillstanden
+# syntes aldrig i utvarderingsloggen.
+#
+# Trogen kopia av produktionslogiken. Endast read-only berakningar -
+# inga kommandon skickas. Vissa indata (t.ex. forecast) kan vara -1/unknown
+# i shadow tills forecast-bryggan fran .161 ar aktiverad; formlerna faller
+# da tillbaka pa dokumenterade defaults.
+#
+# Beroendekedja (portade harmed):
+#   tariff_period, peak_limit_active_kw, grid_import_2min_mean,
+#   scheduled_load_risk, peak_reserve_soc, battery_marginal_value,
+#   battery_value_score, effective_battery_value, export_value_now,
+#   active_reserve_floor
+# =============================================================================
+
+template:
+  - sensor:
+      - name: "Gen24 Tariff Period"
+        unique_id: gen24_tariff_period
+        state: >
+          {% set h = now().hour %}
+          {{ 'day' if 6 <= h < 22 else 'night' }}
+
+      # Solprognos-konvertering (W) - läser från abstrakt sensor gen24_forecast_next_hour_kwh
+
+      - name: "Gen24 Peak Limit Active"
+        unique_id: gen24_peak_limit_active_kw
+        unit_of_measurement: "kW"
+        device_class: power
+        state: >
+          {% if is_state('sensor.gen24_tariff_period','day') %}
+            {{ states('input_number.gen24_peak_limit_day_kw') | float(0) }}
+          {% else %}
+            {{ states('input_number.gen24_peak_limit_night_kw') | float(0) }}
+          {% endif %}
+        icon: mdi:speedometer
+
+      # ---- SoC Target för Price Strategy ----
+
+      - name: "GEN24 Scheduled Load Risk"
+        unique_id: gen24_scheduled_load_risk
+        unit_of_measurement: "score"
+        state: >
+          {% set enabled = is_state('input_boolean.gen24_scheduled_load_enabled', 'on') %}
+          {% if not enabled %}
+            0
+          {% else %}
+            {% set now_min = now().hour * 60 + now().minute %}
+            {% set lead_min = states('input_number.gen24_load_window_lead_time_min') | int(90) %}
+
+            {% set morning_enabled = is_state('input_boolean.gen24_load_window_morning_enabled', 'on') %}
+            {% set evening_enabled = is_state('input_boolean.gen24_load_window_evening_enabled', 'on') %}
+
+            {% set m_start_s = states('input_datetime.gen24_load_window_morning_start') %}
+            {% set m_end_s = states('input_datetime.gen24_load_window_morning_end') %}
+            {% set e_start_s = states('input_datetime.gen24_load_window_evening_start') %}
+            {% set e_end_s = states('input_datetime.gen24_load_window_evening_end') %}
+
+            {% set m_start = (m_start_s[0:2] | int(0)) * 60 + (m_start_s[3:5] | int(0)) %}
+            {% set m_end   = (m_end_s[0:2]   | int(0)) * 60 + (m_end_s[3:5]   | int(0)) %}
+            {% set e_start = (e_start_s[0:2] | int(0)) * 60 + (e_start_s[3:5] | int(0)) %}
+            {% set e_end   = (e_end_s[0:2]   | int(0)) * 60 + (e_end_s[3:5]   | int(0)) %}
+
+            {% set m_kw = states('input_number.gen24_load_window_morning_expected_kw') | float(0) %}
+            {% set e_kw = states('input_number.gen24_load_window_evening_expected_kw') | float(0) %}
+
+            {% set risk = 0 %}
+
+            {# Morning window #}
+            {% if morning_enabled %}
+              {% if now_min >= m_start and now_min < m_end %}
+                {% set risk = risk + (35 + (m_kw * 8)) %}
+              {% elif now_min < m_start and (m_start - now_min) <= lead_min %}
+                {% set proximity = 1 - ((m_start - now_min) / lead_min) %}
+                {% set risk = risk + ((15 + (m_kw * 7)) + proximity * 25) %}
+              {% endif %}
+            {% endif %}
+
+            {# Evening window #}
+            {% if evening_enabled %}
+              {% if now_min >= e_start and now_min < e_end %}
+                {% set risk = risk + (40 + (e_kw * 8)) %}
+              {% elif now_min < e_start and (e_start - now_min) <= lead_min %}
+                {% set proximity = 1 - ((e_start - now_min) / lead_min) %}
+                {% set risk = risk + ((18 + (e_kw * 7)) + proximity * 28) %}
+              {% endif %}
+            {% endif %}
+
+            {% if risk < 0 %}{% set risk = 0 %}{% endif %}
+            {% if risk > 100 %}{% set risk = 100 %}{% endif %}
+            {{ risk | round(0) }}
+          {% endif %}
+
+        attributes:
+          note: >
+            Högre score = större behov att spara batteri inför planerad hög belastning.
+          active_window: >
+            {% set now_min = now().hour * 60 + now().minute %}
+            {% set m_start_s = states('input_datetime.gen24_load_window_morning_start') %}
+            {% set m_end_s = states('input_datetime.gen24_load_window_morning_end') %}
+            {% set e_start_s = states('input_datetime.gen24_load_window_evening_start') %}
+            {% set e_end_s = states('input_datetime.gen24_load_window_evening_end') %}
+            {% set m_start = (m_start_s[0:2] | int(0)) * 60 + (m_start_s[3:5] | int(0)) %}
+            {% set m_end   = (m_end_s[0:2]   | int(0)) * 60 + (m_end_s[3:5]   | int(0)) %}
+            {% set e_start = (e_start_s[0:2] | int(0)) * 60 + (e_start_s[3:5] | int(0)) %}
+            {% set e_end   = (e_end_s[0:2]   | int(0)) * 60 + (e_end_s[3:5]   | int(0)) %}
+            {% if now_min >= m_start and now_min < m_end %}
+              morning
+            {% elif now_min >= e_start and now_min < e_end %}
+              evening
+            {% else %}
+              none
+            {% endif %}
+
+      ##########################################################################
+      # V12: PEAK RESERVE SOC
+      # Rekommenderad reserverad SoC för peak + planerad hög belastning
+      ##########################################################################
+
+      - name: "GEN24 Peak Reserve SoC"
+        unique_id: gen24_peak_reserve_soc
+        unit_of_measurement: "%"
+        state: >
+          {% set soc_safe = states('input_number.gen24_soc_min_safe') | float(15) %}
+          {% set min_reserve = states('input_number.gen24_load_window_min_reserve_soc') | float(20) %}
+          {% set max_reserve = states('input_number.gen24_load_window_max_reserve_soc') | float(65) %}
+          {% set sched_risk = states('sensor.gen24_scheduled_load_risk') | float(0) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
+          {% set reserve = min_reserve %}
+
+          {# scheduled load contribution #}
+          {% set reserve = reserve + ((sched_risk / 100) * (max_reserve - min_reserve)) %}
+
+          {# live peak risk contribution #}
+          {% if peak_limit > 0 and grid_2min >= (peak_limit * 0.9) %}
+            {% set reserve = reserve + 10 %}
+          {% elif peak_limit > 0 and grid_2min >= (peak_limit * 0.75) %}
+            {% set reserve = reserve + 5 %}
+          {% endif %}
+
+          {% if reserve < soc_safe %}{% set reserve = soc_safe %}{% endif %}
+          {% if reserve > max_reserve %}{% set reserve = max_reserve %}{% endif %}
+          {{ reserve | round(0) }}
+
+        attributes:
+          note: >
+            Rekommenderad reservnivå för att klara peak shaving och schemalagda lastfönster.
+
+      ##########################################################################
+      # V12: BATTERY MARGINAL VALUE
+      # 0-100
+      # Högre värde = nästa kWh i batteriet är mer värdefull att spara
+      ##########################################################################
+
+      - name: "GEN24 Battery Marginal Value"
+        unique_id: gen24_battery_marginal_value
+        unit_of_measurement: "score"
+        state: >
+          {% set soc = states('sensor.gen24_battery_soc') | float(0) %}
+          {% set price = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) %}
+          {% set cheap = states('input_number.gen24_price_cheap_threshold_sek') | float(0) %}
+          {% set expensive = states('input_number.gen24_price_expensive_threshold_sek') | float(999) %}
+          {% set forecast_score = states('input_number.gen24_solar_forecast_score') | float(50) %}
+          {% set export_value = states('sensor.gen24_export_value_now') | float(0) %}
+          {% set sched_risk = states('sensor.gen24_scheduled_load_risk') | float(0) %}
+          {% set peak_reserve = states('sensor.gen24_peak_reserve_soc') | float(20) %}
+          {% set night_ev = is_state('input_boolean.gen24_night_ev_peak_mode', 'on') %}
+
+          {% set score = 50 %}
+
+          {# price contribution #}
+          {% if price >= expensive %}
+            {% set score = score + 18 %}
+          {% elif price >= 0 and price <= cheap %}
+            {% set score = score - 12 %}
+          {% endif %}
+
+          {# scheduled load / reserve contribution #}
+          {% set score = score + (sched_risk * 0.25) %}
+
+          {# low soc / reserve pressure contribution #}
+          {% if soc < peak_reserve %}
+            {% set score = score + 18 %}
+          {% elif soc < (peak_reserve + 10) %}
+            {% set score = score + 8 %}
+          {% elif soc > 85 %}
+            {% set score = score - 8 %}
+          {% endif %}
+
+          {# solar forecast reduces marginal value #}
+          {% if forecast_score >= 75 %}
+            {% set score = score - 16 %}
+          {% elif forecast_score >= 60 %}
+            {% set score = score - 8 %}
+          {% elif forecast_score <= 25 %}
+            {% set score = score + 10 %}
+          {% endif %}
+
+          {# export attractiveness lowers hold value somewhat #}
+          {% if export_value >= 70 %}
+            {% set score = score - 10 %}
+          {% elif export_value >= 50 %}
+            {% set score = score - 5 %}
+          {% endif %}
+
+          {# EV night priority mildly increases value #}
+          {% if night_ev %}
+            {% set score = score + 8 %}
+          {% endif %}
+
+          {% if score < 0 %}{% set score = 0 %}{% endif %}
+          {% if score > 100 %}{% set score = 100 %}{% endif %}
+          {{ score | round(0) }}
+
+        attributes:
+          interpretation: >
+            {% set s = states('sensor.gen24_battery_marginal_value') | float(50) %}
+            {% if s >= 80 %}
+              very_high
+            {% elif s >= 65 %}
+              high
+            {% elif s >= 45 %}
+              medium
+            {% elif s >= 25 %}
+              low
+            {% else %}
+              very_low
+            {% endif %}
+          note: >
+            Högre score = batteriets energi bör sparas för framtida dyra timmar,
+            peak shaving eller schemalagd hög belastning.
+
+
+
+      ##########################################################################
+      # PLAN SENSOR 1: BATTERY VALUE SCORE (V12 HYBRID)
+      #
+      # 0-100 where higher means battery energy should generally be preserved.
+      #
+      # Hybridmodell:
+      # - Behåller gamla grunder:
+      #     * price
+      #     * forecast
+      #     * peak proximity
+      #     * SoC
+      #     * EV night mode
+      # - Lägger till v12:
+      #     * scheduled_load_risk
+      #     * peak_reserve_soc
+      #     * battery_marginal_value
+      #     * dynamic_target_soc
+      #
+      # Tanke:
+      # - battery_marginal_value = kärnsignal
+      # - battery_value_score = bredare systemscore / policy-bias
+      ##########################################################################
+
+      - name: "GEN24 Battery Value Score"
+        unique_id: gen24_battery_value_score
+        unit_of_measurement: "score"
+        state: >
+          {% set soc = states('sensor.gen24_battery_soc') | float(0) %}
+          {% set price = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) %}
+          {% set cheap = states('input_number.gen24_price_cheap_threshold_sek') | float(0) %}
+          {% set expensive = states('input_number.gen24_price_expensive_threshold_sek') | float(999) %}
+          {% set forecast_score = states('input_number.gen24_solar_forecast_score') | float(50) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
+          {% set export_min_soc = states('input_number.gen24_exportmode_min_soc_force_export') | float(65) %}
+          {% set night_ev = is_state('input_boolean.gen24_night_ev_peak_mode', 'on') %}
+          {% set is_night = now().hour >= 22 or now().hour < 6 %}
+          {% set is_day = not is_night %}
+
+          {# --- New v12 inputs --- #}
+          {% set sched_risk = states('sensor.gen24_scheduled_load_risk') | float(0) %}
+          {% set reserve_soc = states('sensor.gen24_peak_reserve_soc') | float(20) %}
+          {% set marginal_value = states('sensor.gen24_battery_marginal_value') | float(50) %}
+          {% set dyn_target = states('sensor.gen24_dynamic_target_soc') | float(70) %}
+
+          {% set score = 50 %}
+
+          {# ================================================================ #}
+          {# OLD LOGIC KEPT                                                   #}
+          {# ================================================================ #}
+
+          {# price value #}
+          {% if price >= 0 and price >= expensive %}
+            {% set score = score + 18 %}
+          {% elif price >= 0 and price <= cheap %}
+            {% set score = score - 14 %}
+          {% endif %}
+
+          {# solar tomorrow reduces value of stored energy now #}
+          {% if forecast_score >= 75 %}
+            {% set score = score - 16 %}
+          {% elif forecast_score >= 60 %}
+            {% set score = score - 8 %}
+          {% elif forecast_score <= 25 %}
+            {% set score = score + 10 %}
+          {% endif %}
+
+          {# near peak makes battery more valuable #}
+          {% if peak_limit > 0 and grid_2min >= (peak_limit * 0.9) %}
+            {% set score = score + 18 %}
+          {% elif peak_limit > 0 and grid_2min >= (peak_limit * 0.75) %}
+            {% set score = score + 8 %}
+          {% endif %}
+
+          {# low SoC makes remaining energy more valuable #}
+          {% if soc <= 20 %}
+            {% set score = score + 12 %}
+          {% elif soc >= 85 %}
+            {% set score = score - 8 %}
+          {% endif %}
+
+          {# EV priority night #}
+          {% if night_ev %}
+            {% set score = score + 6 %}
+          {% endif %}
+
+          {# daytime with high SoC over export floor makes discharge/export more attractive #}
+          {% if is_day and soc >= export_min_soc and price >= expensive %}
+            {% set score = score - 6 %}
+          {% endif %}
+
+          {# ================================================================ #}
+          {# V12 ADDITION 1: scheduled load risk                              #}
+          {# ================================================================ #}
+          {% if sched_risk >= 80 %}
+            {% set score = score + 18 %}
+          {% elif sched_risk >= 60 %}
+            {% set score = score + 12 %}
+          {% elif sched_risk >= 40 %}
+            {% set score = score + 6 %}
+          {% endif %}
+
+          {# ================================================================ #}
+          {# V12 ADDITION 2: reserve pressure                                 #}
+          {# If SoC is below reserve/target, stored energy is more valuable   #}
+          {# ================================================================ #}
+          {% if soc < reserve_soc %}
+            {% set score = score + 18 %}
+          {% elif soc < (reserve_soc + 10) %}
+            {% set score = score + 8 %}
+          {% endif %}
+
+          {% if soc < dyn_target %}
+            {% set score = score + 6 %}
+          {% elif soc > dyn_target + 10 %}
+            {% set score = score - 6 %}
+          {% endif %}
+
+          {# ================================================================ #}
+          {# V12 ADDITION 3: marginal value coupling                          #}
+          {# Keep this moderate to avoid double-counting too hard             #}
+          {# ================================================================ #}
+          {% if marginal_value >= 80 %}
+            {% set score = score + 14 %}
+          {% elif marginal_value >= 65 %}
+            {% set score = score + 8 %}
+          {% elif marginal_value <= 30 %}
+            {% set score = score - 10 %}
+          {% endif %}
+
+          {% if score < 0 %}{% set score = 0 %}{% endif %}
+          {% if score > 100 %}{% set score = 100 %}{% endif %}
+          {{ score | round(0) }}
+
+        attributes:
+          interpretation: >
+            {% set s = states('sensor.gen24_battery_value_score') | float(50) %}
+            {% if s >= 75 %}
+              very_high
+            {% elif s >= 60 %}
+              high
+            {% elif s >= 40 %}
+              medium
+            {% elif s >= 25 %}
+              low
+            {% else %}
+              very_low
+            {% endif %}
+
+          preserve_bias: >
+            {% set s = states('sensor.gen24_battery_value_score') | float(50) %}
+            {% if s >= 70 %}
+              strong_preserve
+            {% elif s >= 55 %}
+              preserve
+            {% elif s >= 40 %}
+              balanced
+            {% elif s >= 25 %}
+              use_allowed
+            {% else %}
+              aggressive_use_allowed
+            {% endif %}
+
+          note: >
+            Hybrid v12 battery value score. Higher score = battery should generally
+            be preserved for future expensive hours, scheduled high load or peak shaving.
+            Lower score = export/discharge/grid-charge decisions can be more aggressive.
+
+
+      ##########################################################################
+      # PLAN SENSOR 2: DYNAMIC TARGET SOC (V12 HYBRID)
+      #
+      # Hybridmodell:
+      # - Behåller gamla basvärden:
+      #     * input_number.gen24_daytime_soc_target
+      #     * input_number.gen24_night_soc_target
+      # - Behåller gamla pris/forecast/EV-justeringar
+      # - Lägger till v12:
+      #     * scheduled_load_risk
+      #     * peak_reserve_soc
+      #     * battery_marginal_value
+      #
+      # Tanke:
+      # - gamla day/night helpers = baspreferens
+      # - v12-lager = verklig intelligent justering
+      ##########################################################################
+
+      - name: "GEN24 Effective Battery Value"
+        unique_id: gen24_effective_battery_value
+        unit_of_measurement: "score"
+        state: >
+          {% set marginal = states('sensor.gen24_battery_marginal_value') | float(50) %}
+          {% set score = states('sensor.gen24_battery_value_score') | float(50) %}
+
+          {# normalize score around neutral #}
+          {% set bias = (score - 50) * 0.3 %}
+
+          {% set value = marginal + bias %}
+
+          {% if value < 0 %}{% set value = 0 %}{% endif %}
+          {% if value > 100 %}{% set value = 100 %}{% endif %}
+
+          {{ value | round(0) }}
+
+        attributes:
+          marginal_value: "{{ states('sensor.gen24_battery_marginal_value') }}"
+          policy_score: "{{ states('sensor.gen24_battery_value_score') }}"
+          note: >
+            Effective battery value used to avoid double-counting between
+            marginal_value and value_score.
+
+      ##########################################################################
+      # V12: SCHEDULED LOAD RISK
+      # 0-100
+      # Högre värde = större anledning att reservera batteri inför planerad last
+      ##########################################################################
+
+      - name: "GEN24 Export Value Now"
+        unique_id: gen24_export_value_now
+        unit_of_measurement: "score"
+        state: >
+          {% set soc = states('sensor.gen24_battery_soc') | float(0) %}
+          {% set dyn_target = states('sensor.gen24_dynamic_target_soc') | float(70) %}
+          {% set export_min_soc = states('input_number.gen24_exportmode_min_soc_force_export') | float(65) %}
+          {% set price = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) %}
+          {% set expensive = states('input_number.gen24_price_expensive_threshold_sek') | float(999) %}
+          {% set cheap = states('input_number.gen24_price_cheap_threshold_sek') | float(0) %}
+          {% set forecast_score = states('input_number.gen24_solar_forecast_score') | float(50) %}
+          {% set peak_limit = states('sensor.gen24_peak_limit_active_kw') | float(0) %}
+          {% set grid_2min = states('sensor.gen24_grid_import_2min_mean') | float(0) / 1000 %}
+          {% set cmd = states('input_text.gen24_last_battery_command') | lower %}
+
+          {% set score = 20 %}
+
+          {# DYNAMISK säljpris-tröskel (gen24_price_provider.yaml); #}
+          {# fallback till fast expensive-tröskel om sensorerna saknas. #}
+          {% set sell = states('sensor.gen24_sell_price') | float(-999) %}
+          {% set sell_thr = states('sensor.gen24_sell_threshold') | float(-999) %}
+          {% set sell_attractive = (sell >= sell_thr) if (sell > -900 and sell_thr > -900) else (price >= expensive) %}
+          {% if sell_attractive %}
+            {% set score = score + 30 %}
+          {% elif price <= cheap %}
+            {% set score = score - 20 %}
+          {% endif %}
+
+          {% if soc >= export_min_soc %}
+            {% set score = score + 18 %}
+          {% else %}
+            {% set score = score - 18 %}
+          {% endif %}
+
+          {% if soc > dyn_target + 10 %}
+            {% set score = score + 14 %}
+          {% elif soc < dyn_target %}
+            {% set score = score - 14 %}
+          {% endif %}
+
+          {% if forecast_score >= 70 %}
+            {% set score = score + 10 %}
+          {% elif forecast_score <= 25 %}
+            {% set score = score - 8 %}
+          {% endif %}
+
+          {# if already close to peak limit, preserve battery for local shaving rather than export #}
+          {% if peak_limit > 0 and grid_2min >= (peak_limit * 0.9) %}
+            {% set score = score - 18 %}
+          {% endif %}
+
+          {# slight inertia in current discharge/export direction #}
+          {% if cmd.startswith('discharge_') %}
+            {% set score = score + 4 %}
+          {% endif %}
+
+          {% if score < 0 %}{% set score = 0 %}{% endif %}
+          {% if score > 100 %}{% set score = 100 %}{% endif %}
+          {{ score | round(0) }}
+
+        attributes:
+          recommendation: >
+            {% set s = states('sensor.gen24_export_value_now') | float(0) %}
+            {% if s >= 70 %}
+              strong_export
+            {% elif s >= 50 %}
+              mild_export
+            {% elif s >= 30 %}
+              neutral
+            {% else %}
+              avoid_export
+            {% endif %}
+          note: >
+            Higher score = exporting/discharging now is attractive.
+            Lower score = conserve battery for later.
+
+      - name: "GEN24 Active Reserve Floor"
+        unique_id: gen24_active_reserve_floor
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:battery-lock
+        state: >-
+          {% set safe = states('input_number.gen24_soc_min_safe') | float(15) %}
+          {% set peak = states('sensor.gen24_peak_reserve_soc') | float(safe) %}
+          {% set risk = states('sensor.gen24_scheduled_load_risk') | float(0) %}
+          {% set sched_max = states('input_number.gen24_shadow_scheduled_reserve_max_pct') | float(20) %}
+          {% set scheduled = safe + (risk / 100 * sched_max) %}
+          {% set tariff = is_state('input_boolean.gen24_peak_penalty_active', 'on') %}
+          {{ ([safe, (peak if tariff else scheduled)] | max) | round(1) }}
+        attributes:
+          source: >-
+            {{ 'peak_tariff' if is_state('input_boolean.gen24_peak_penalty_active', 'on')
+               else 'scheduled_load' }}
+          tariff_enabled: "{{ is_state('input_boolean.gen24_peak_penalty_active', 'on') }}"
+          raw_peak_reserve_soc: "{{ states('sensor.gen24_peak_reserve_soc') }}"
+          scheduled_load_risk: "{{ states('sensor.gen24_scheduled_load_risk') }}"
+          useful_pv_forecast_kwh: "{{ states('sensor.gen24_shadow_useful_pv_forecast') }}"
+
+sensor:
+  # The SunSpec MPPT lifetime-energy registers currently have an unverified
+  # Fronius scaling and must not be used for daily production. Integrate the
+  # already verified MPPT power values instead.
+  - platform: integration
+    source: sensor.gen24_mppt1_sfml_power
+    name: "GEN24 MPPT1 Integrated Energy"
+    unique_id: gen24_mppt1_integrated_energy
+    unit_prefix: k
+    unit_time: h
+    round: 4
+    method: left
+    max_sub_interval:
+      minutes: 5
+
+  - platform: integration
+    source: sensor.gen24_mppt2_sfml_power
+    name: "GEN24 MPPT2 Integrated Energy"
+    unique_id: gen24_mppt2_integrated_energy
+    unit_prefix: k
+    unit_time: h
+    round: 4
+    method: left
+    max_sub_interval:
+      minutes: 5
+
+utility_meter:
+  # Diagnostic daily totals. SFML's current panel-group config flow does NOT
+  # accept these kWh entities in group_1_sensor/group_2_sensor; use the W aliases.
+  gen24_mppt1_daily_energy:
+    name: "GEN24 MPPT1 Daily Energy"
+    unique_id: gen24_mppt1_daily_energy
+    source: sensor.gen24_mppt1_integrated_energy
+    cycle: daily
+
+  gen24_mppt2_daily_energy:
+    name: "GEN24 MPPT2 Daily Energy"
+    unique_id: gen24_mppt2_daily_energy
+    source: sensor.gen24_mppt2_integrated_energy
+    cycle: daily
+
+
+# -----------------------------------------------------------------------------
+# Statistics-sensor: 2-minuters glidande medel av natimport (peak-filter)
+# Portad fran produktionens ps_03_sensors_statistics.yaml
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: statistics
+    name: "Gen24 Grid Import 2min Mean"
+    unique_id: gen24_grid_import_2min_mean
+    entity_id: sensor.gen24_grid_import_power
+    state_characteristic: mean
+    max_age:
+      minutes: 2
+    sampling_size: 60
+    precision: 0

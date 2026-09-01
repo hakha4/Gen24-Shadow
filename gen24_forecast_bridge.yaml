@@ -1,0 +1,107 @@
+# =============================================================================
+# gen24_forecast_bridge.yaml
+# =============================================================================
+# MOTTAGARSIDA (.123 shadow) för forecast-bryggan från produktion .161.
+#
+# BAKGRUND:
+# Shadow saknar egen SFML-/Solcast-prognos. Utan prognos faller
+# gen24_forecast_remaining_kwh / _tomorrow_kwh / _next_hour_kwh / solar
+# forecast_score tillbaka på -1, vilket gör att forecast-beroende guards
+# (SELF_CONS_DAY, DAYTIME_SMART, EXPORT-score) utvärderas felaktigt.
+#
+# LÖSNING (tillfällig, under testfasen):
+# En automation på .161 publicerar de färdiga prognosvärdena var 5:e minut
+# till MQTT-topics under gen24_shadow/forecast/*. Dessa sensorer läser in
+# dem så att shadow får EXAKT samma prognos som produktion.
+#
+# read-only: dessa sensorer tar emot data, skickar inga kommandon.
+#
+# .161-SIDAN (klistra in i produktionens automations-paket):
+# -----------------------------------------------------------------------------
+#   - alias: "Publicera forecast till shadow .123"
+#     trigger:
+#       - platform: time_pattern
+#         minutes: "/5"
+#       - platform: homeassistant
+#         event: start
+#     action:
+#       - service: mqtt.publish
+#         data:
+#           topic: "gen24_shadow/forecast/remaining_kwh"
+#           retain: true
+#           payload: "{{ states('sensor.gen24_forecast_remaining_kwh') }}"
+#       - service: mqtt.publish
+#         data:
+#           topic: "gen24_shadow/forecast/tomorrow_kwh"
+#           retain: true
+#           payload: "{{ states('sensor.gen24_forecast_tomorrow_kwh') }}"
+#       - service: mqtt.publish
+#         data:
+#           topic: "gen24_shadow/forecast/next_hour_kwh"
+#           retain: true
+#           payload: "{{ states('sensor.gen24_forecast_next_hour_kwh') }}"
+#       - service: mqtt.publish
+#         data:
+#           topic: "gen24_shadow/forecast/solar_forecast_score"
+#           retain: true
+#           payload: "{{ states('sensor.gen24_solar_forecast_score') }}"
+# -----------------------------------------------------------------------------
+#
+# AVVECKLING: när testfasen är klar, avaktivera .161-automationen. Sensorerna
+# nedan blir då "unavailable" och forecast-beroende logik faller tillbaka på
+# sina defaults igen (dokumenterat i ps_20_planning_sensors.yaml).
+# =============================================================================
+
+mqtt:
+  sensor:
+    - name: "Gen24 Forecast Remaining kWh"
+      unique_id: gen24_forecast_remaining_kwh
+      state_topic: "gen24_shadow/forecast/remaining_kwh"
+      unit_of_measurement: "kWh"
+      icon: mdi:solar-power
+      # Ignorera tomma/ogiltiga payloads så entiteten inte blir 'unknown'
+      value_template: >-
+        {% if value not in ['', 'unknown', 'unavailable', 'none', 'None'] %}
+          {{ value | float(-1) | round(2) }}
+        {% else %}
+          -1
+        {% endif %}
+      expire_after: 1800
+
+    - name: "Gen24 Forecast Tomorrow kWh"
+      unique_id: gen24_forecast_tomorrow_kwh
+      state_topic: "gen24_shadow/forecast/tomorrow_kwh"
+      unit_of_measurement: "kWh"
+      icon: mdi:weather-sunny
+      value_template: >-
+        {% if value not in ['', 'unknown', 'unavailable', 'none', 'None'] %}
+          {{ value | float(-1) | round(2) }}
+        {% else %}
+          -1
+        {% endif %}
+      expire_after: 1800
+
+    - name: "Gen24 Forecast Next Hour kWh"
+      unique_id: gen24_forecast_next_hour_kwh
+      state_topic: "gen24_shadow/forecast/next_hour_kwh"
+      unit_of_measurement: "kWh"
+      icon: mdi:weather-sunny-alert
+      value_template: >-
+        {% if value not in ['', 'unknown', 'unavailable', 'none', 'None'] %}
+          {{ value | float(0) | round(3) }}
+        {% else %}
+          0
+        {% endif %}
+      expire_after: 1800
+
+    - name: "GEN24 Solar Forecast Raw Score"
+      unique_id: gen24_solar_forecast_score
+      state_topic: "gen24_shadow/forecast/solar_forecast_score"
+      icon: mdi:weather-sunny-alert
+      value_template: >-
+        {% if value not in ['', 'unknown', 'unavailable', 'none', 'None'] %}
+          {{ value | int(-1) }}
+        {% else %}
+          -1
+        {% endif %}
+      expire_after: 1800
