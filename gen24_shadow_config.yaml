@@ -1,0 +1,140 @@
+# =============================================================================
+# gen24_shadow_config.yaml
+# =============================================================================
+# Shadow-systemets helpersdefinitioner.
+#
+# Dessa input_* helpers krävs av 20_state_machine.yaml men definierades inte
+# i de tidigare shadow-paketen (de lever i produktion i 00_config.yaml).
+#
+# Fas 1: read-only / observationsläge. Inga kommandon skickas.
+# Uppdatera initial-värden efter behov för teständamål.
+# =============================================================================
+
+input_boolean:
+
+  gen24_selfcons_enabled:
+    name: "GEN24 Självkonsumtion aktiverad"
+    # Styr om SELF_CONS_DAY / SELF_CONS_NIGHT-guard passerar.
+    # Sätt OFF för att inaktivera självkonsumtionsläge helt.
+    initial: true
+    icon: mdi:solar-panel
+
+input_number:
+
+  gen24_soc_min_safe:
+    # Absolut lägsta SoC — state machine tillåter ej urladdning under detta.
+    name: "GEN24 Minimum SoC säker (%)"
+    icon: mdi:battery-alert
+    min: 0
+    max: 50
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    initial: 15
+
+  gen24_solar_charge_soc_max:
+    # Övre SoC-gräns för SOLAR_CHARGE-läget (ladda via sol).
+    name: "GEN24 Sol-laddning max SoC (%)"
+    icon: mdi:battery-charging-90
+    min: 50
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: box
+    initial: 95
+
+  gen24_solar_export_min_w:
+    # Minimieffekt (W) från solen för att SOLAR_CHARGE-läget ska vara aktuellt.
+    name: "GEN24 Sol export minimum (W)"
+    icon: mdi:solar-power
+    min: 0
+    max: 500
+    step: 10
+    unit_of_measurement: "W"
+    mode: box
+    initial: 150
+
+  gen24_selfcons_min_import_w:
+    # Hur mycket nätimport som tolereras innan batteriet urladdar.
+    # Sänk = mer aggressiv självkonsumtion.
+    name: "GEN24 Självkonsumtion min import (W)"
+    icon: mdi:transmission-tower-import
+    min: 50
+    max: 1000
+    step: 50
+    unit_of_measurement: "W"
+    mode: box
+    initial: 100
+
+  gen24_night_solar_min_kwh:
+    # Om solprognosen imorgon är UNDER detta startar INTE natt-urladdning.
+    name: "GEN24 Natt sol minimum (kWh)"
+    icon: mdi:weather-sunny
+    min: 1
+    max: 30
+    step: 0.5
+    unit_of_measurement: "kWh"
+    mode: box
+    initial: 4
+
+  gen24_peak_margin_kw:
+    # Marginal (kW) under peak-gränsen för PEAK_SHAVE-läget.
+    # OBS: PEAK_SHAVE-guardet kräver sensor.gen24_peak_limit_active_kw
+    # som inte är implementerad i shadow Fas 1 → guardet är alltid inaktivt.
+    name: "GEN24 Peak-marginal (kW)"
+    icon: mdi:chart-bell-curve-cumulative
+    min: 0.0
+    max: 2.0
+    step: 0.05
+    unit_of_measurement: "kW"
+    mode: box
+    initial: 0.30
+
+  gen24_price_very_cheap_ratio:
+    # Prisratio: om spotpris < cheap_threshold * detta → "mycket billigt".
+    # Används i CHARGE_CHEAP-logiken.
+    name: "GEN24 Pris mycket billigt ratio"
+    icon: mdi:tag-arrow-down
+    min: 0.0
+    max: 1.0
+    step: 0.05
+    mode: slider
+    initial: 0.50
+
+  gen24_daytime_forecast_gate_ratio:
+    # Dagtids-gate: om forecast_remaining > battery_remaining * detta
+    # → DAYTIME_SMART blockeras (sol räcker, ladda inte).
+    name: "GEN24 Dagtid forecast-gate ratio"
+    icon: mdi:weather-sunny-alert
+    min: 1.0
+    max: 3.0
+    step: 0.1
+    mode: slider
+    initial: 1.5
+
+input_select:
+
+  gen24_control_strategy:
+    name: "GEN24 Kontrollstrategi"
+    options:
+      - "Peak shave - fast pris"
+      - "Peak shave - rörligt pris"
+      - "Auto (inverter)"
+      - "Manual"
+    initial: "Peak shave - rörligt pris"
+    icon: mdi:strategy
+
+  gen24_last_ui_command:
+    name: "GEN24 Senaste UI-kommando"
+    # Sätts av UI-knappar i dashboarden.
+    # "none" = ingen aktiv latch, state machine styr fritt.
+    options:
+      - "none"
+      - "force_charge"
+      - "force_discharge"
+      - "pv_charge"
+      - "block_charge"
+      - "block_discharge"
+      - "stop"
+    initial: "none"
+    icon: mdi:gesture-tap

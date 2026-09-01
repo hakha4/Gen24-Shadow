@@ -55,7 +55,7 @@ input_text:
     name: "GEN24 Econ Price Entity"
     icon: mdi:link-variant
     max: 255
-    initial: "sensor.nord_pool_se3_aktuellt_pris"
+    initial: "sensor.nordpool_kwh_se3_sek_3_10_025"
 
 template:
   - sensor:
