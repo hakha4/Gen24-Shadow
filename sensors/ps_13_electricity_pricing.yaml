@@ -1,0 +1,273 @@
+# =============================================================================
+# ps_13_electricity_pricing.yaml
+#
+# Electricity pricing sensors and helpers.
+# Tracks buy price, sell price, breakeven and margin for battery discharge
+# decisions.
+#
+# Assumptions:
+#   - sensor.nordpool_kwh_se3_sek_3_10_025 includes 25% VAT (025 suffix)
+#   - Sell revenue = Nordpool spot excl. VAT - rörlig säljkostnad
+#   - All öre/kWh values on bill assumed to include VAT
+#
+# Price plans:
+#   Fast pris  : fixed electricity price until 2026-06
+#   Rörligt pris: spot-based (active from 2026-06)
+# =============================================================================
+
+input_select:
+  gen24_price_plan:
+    name: "GEN24 Prisplan"
+    options:
+      - "Fast pris"
+      - "Rörligt pris"
+    initial: "Rörligt pris"   # default: rörligt pris (ändrat 2026-08)
+    icon: mdi:tag-text
+
+input_number:
+  # Electricity price (fixed plan)
+  gen24_fixed_electricity_price_ore:
+    name: "GEN24 Fast elpris inkl. moms"
+    min: 0
+    max: 500
+    step: 0.25
+    unit_of_measurement: "öre/kWh"
+    initial: 57.75
+    icon: mdi:lightning-bolt
+
+  # DEPRECATED (2026-08): Dessa ersattes av elpris_energiskatt /
+  # elpris_natavgift_rorlig i gen24_price_provider.yaml, som nu är enda
+  # sanningskälla för skatt/nätavgift/moms. Behålls för bakåtkompatibilitet
+  # men används INTE längre av gen24_total_buy_price. Ta bort helt när inga
+  # dashboards refererar dem.
+  gen24_energy_tax_ore:
+    name: "GEN24 Energiskatt inkl. moms (DEPRECATED)"
+    min: 0
+    max: 100
+    step: 0.1
+    unit_of_measurement: "öre/kWh"
+    initial: 45.0
+    icon: mdi:bank-outline
+
+  gen24_grid_variable_fee_ore:
+    name: "GEN24 Nätavgift rörlig inkl. moms (DEPRECATED)"
+    min: 0
+    max: 50
+    step: 0.1
+    unit_of_measurement: "öre/kWh"
+    initial: 7.0
+    icon: mdi:transmission-tower
+
+  # Sell cost (broker fee etc.)
+  gen24_sell_cost_ore:
+    name: "GEN24 Rörlig kostnad försäljning"
+    min: 0
+    max: 20
+    step: 0.01
+    unit_of_measurement: "öre/kWh"
+    initial: 0
+    icon: mdi:cash-minus
+
+  # DEPRECATED 2026-08-30: momsfaktorn härleds nu från input_number.elpris_moms
+  # (enda sanningskälla). Denna hjälpare används inte längre av gen24_sell_breakeven
+  # och behålls bara för bakåtkompatibilitet. Ändra elpris_moms istället.
+  gen24_spot_vat_factor:
+    name: "GEN24 Moms-faktor Nordpool-sensor (UTGÅR)"
+    min: 1.0
+    max: 1.30
+    step: 0.01
+    unit_of_measurement: ""
+    initial: 1.25
+    icon: mdi:percent
+
+  # High-price sell automation settings
+  gen24_sell_min_margin_ore:
+    name: "GEN24 Minimiförtjänst för försäljning"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "öre/kWh"
+    initial: 60
+    icon: mdi:cash-check
+
+  gen24_sell_min_soc:
+    name: "GEN24 Lägsta SoC vid försäljning"
+    min: 5
+    max: 80
+    step: 5
+    unit_of_measurement: "%"
+    initial: 20
+    icon: mdi:battery-20
+
+  gen24_sell_discharge_power_w:
+    name: "GEN24 Urladdningseffekt vid försäljning"
+    min: 500
+    max: 10000
+    step: 100
+    unit_of_measurement: "W"
+    initial: 3000
+    icon: mdi:lightning-bolt-outline
+
+template:
+  - sensor:
+
+      # ------------------------------------------------------------------
+      # Total buy price per kWh (all costs included) - öre/kWh
+      #
+      # ENAD KOSTNADSMODELL (2026-08): använder samma helpers som rörliga
+      # kortet (elpris_* i gen24_price_provider.yaml) så BÅDA korten alltid
+      # visar identiska tal. Formel matchar sensor.nordpool_totalt_inkopspris:
+      #   total_inkl = (elpris_exkl + energiskatt + påslag + nätavgift) × (1+moms)
+      #
+      # Fast pris  : elpris = fast elpris (inkl moms → konverteras till exkl)
+      # Rörligt    : elpris = Nordpool spot (konverteras till exkl om källan inkl moms)
+      # ------------------------------------------------------------------
+      - name: "GEN24 Total Buy Price"
+        unique_id: gen24_total_buy_price
+        unit_of_measurement: "öre/kWh"
+        state_class: measurement
+        icon: mdi:cart-arrow-down
+        state: >
+          {% set plan  = states('input_select.gen24_price_plan') %}
+          {% set vat   = states('input_number.elpris_moms') | float(25) / 100 %}
+          {% set tax   = states('input_number.elpris_energiskatt') | float(0.36) %}
+          {% set mark  = states('input_number.elpris_handlare_paslag') | float(0) %}
+          {% set grid  = states('input_number.elpris_natavgift_rorlig') | float(0.208) %}
+          {% if plan == 'Fast pris' %}
+            {% set elec_incl = states('input_number.gen24_fixed_electricity_price_ore') | float(57.75) / 100 %}
+            {% set elec_ex = (elec_incl / (1 + vat)) if (1 + vat) != 0 else elec_incl %}
+          {% else %}
+            {% set src = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(0) %}
+            {% set src_incl = is_state('input_boolean.nordpool_pris_inkluderar_moms', 'on') %}
+            {% set elec_ex = (src / (1 + vat)) if (src_incl and (1 + vat) != 0) else src %}
+          {% endif %}
+          {% set total_incl = (elec_ex + tax + mark + grid) * (1 + vat) %}
+          {{ (total_incl * 100) | round(2) }}
+        attributes:
+          plan: "{{ states('input_select.gen24_price_plan') }}"
+          # Komponenter i SEK/kWh (inkl. moms) - summerar till total_sek
+          electricity_sek: >
+            {% set plan = states('input_select.gen24_price_plan') %}
+            {% set vat  = states('input_number.elpris_moms') | float(25) / 100 %}
+            {% set mark = states('input_number.elpris_handlare_paslag') | float(0) %}
+            {% if plan == 'Fast pris' %}
+              {% set elec_incl = states('input_number.gen24_fixed_electricity_price_ore') | float(57.75) / 100 %}
+              {% set elec_ex = (elec_incl / (1 + vat)) if (1 + vat) != 0 else elec_incl %}
+            {% else %}
+              {% set src = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(0) %}
+              {% set src_incl = is_state('input_boolean.nordpool_pris_inkluderar_moms', 'on') %}
+              {% set elec_ex = (src / (1 + vat)) if (src_incl and (1 + vat) != 0) else src %}
+            {% endif %}
+            {{ ((elec_ex + mark) * (1 + vat)) | round(4) }}
+          energy_tax_sek: >
+            {% set vat = states('input_number.elpris_moms') | float(25) / 100 %}
+            {{ (states('input_number.elpris_energiskatt') | float(0.36) * (1 + vat)) | round(4) }}
+          grid_fee_sek: >
+            {% set vat = states('input_number.elpris_moms') | float(25) / 100 %}
+            {{ (states('input_number.elpris_natavgift_rorlig') | float(0.208) * (1 + vat)) | round(4) }}
+          # Total i SEK/kWh
+          total_sek: "{{ (states('sensor.gen24_total_buy_price') | float(0) / 100) | round(4) }}"
+          # Förklaring
+          description: >
+            {% set plan = states('input_select.gen24_price_plan') %}
+            {% if plan == 'Fast pris' %}
+              (Fast elpris exkl. moms + energiskatt + påslag + nätavgift) × (1+moms)
+            {% else %}
+              (Nordpool spot exkl. moms + energiskatt + påslag + nätavgift) × (1+moms)
+            {% endif %}
+
+
+      # ------------------------------------------------------------------
+      # Breakeven sell price (Nordpool sensor value, öre/kWh)
+      # Minimum spot price for profitable discharge of grid-charged battery.
+      # Formula: (buy_price + sell_cost) * vat_factor
+      # ------------------------------------------------------------------
+      - name: "GEN24 Sell Breakeven"
+        unique_id: gen24_sell_breakeven
+        unit_of_measurement: "öre/kWh"
+        state_class: measurement
+        icon: mdi:scale-balance
+        # FIX 2026-08-30: momsfaktor härleds nu från EN källa (input_number.elpris_moms)
+        # istället for den separata gen24_spot_vat_factor -> ingen risk att de divergerar.
+        state: >
+          {% set buy_price  = states('sensor.gen24_total_buy_price') | float(0) %}
+          {% set sell_cost  = states('input_number.gen24_sell_cost_ore') | float(3.71) %}
+          {% set vat_factor = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+          {{ ((buy_price + sell_cost) * vat_factor) | round(2) }}
+        attributes:
+          description: >
+            Nordpool-sensorn (öre/kWh) måste överstiga detta värde för
+            att urladdning av nätladdat batteri ska vara lönsamt.
+          breakeven_kr: >
+            {% set buy_price  = states('sensor.gen24_total_buy_price') | float(0) %}
+            {% set sell_cost  = states('input_number.gen24_sell_cost_ore') | float(3.71) %}
+            {% set vat_factor = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+            {{ (((buy_price + sell_cost) * vat_factor) / 100) | round(4) }}
+
+      # ------------------------------------------------------------------
+      # Sell margin — profit/loss per kWh sold from grid-charged battery
+      # Positive = profitable, Negative = loss
+      # ------------------------------------------------------------------
+      - name: "GEN24 Sell Margin"
+        unique_id: gen24_sell_margin
+        unit_of_measurement: "öre/kWh"
+        state_class: measurement
+        icon: mdi:trending-up
+        # FIX 2026-08: gen24_sell_price är SEK/kWh men gen24_total_buy_price
+        # är öre/kWh. Konvertera säljpriset till öre (×100) INNAN subtraktion,
+        # annars blir marginalen orimlig (t.ex. -108 öre).
+        state: >
+          {% set sell  = states('sensor.gen24_sell_price') | float(0) * 100 %}
+          {% set buy   = states('sensor.gen24_total_buy_price') | float(0) %}
+          {{ (sell - buy) | round(2) }}
+        attributes:
+          profitable: "{{ (states('sensor.gen24_sell_price') | float(0) * 100) > (states('sensor.gen24_total_buy_price') | float(0)) }}"
+          sell_price_ore: "{{ (states('sensor.gen24_sell_price') | float(0) * 100) | round(2) }}"
+          buy_price_ore: "{{ states('sensor.gen24_total_buy_price') | float(0) | round(2) }}"
+          sell_price_kr: "{{ states('sensor.gen24_sell_price') | float(0) | round(4) }}"
+          buy_price_kr: "{{ (states('sensor.gen24_total_buy_price') | float(0) / 100) | round(4) }}"
+
+      # ------------------------------------------------------------------
+      # Export profit status
+      # Kombinerar aktuellt exportflöde med lönsamhetsberäkning.
+      #
+      # Tre käll-scenarion:
+      #   sol    - PV täcker exporten (kostnad ≈ 0 → alltid vinst)
+      #   batteri - batteri bidrar till export (jämför sell vs buy)
+      #   ej export - inget nätexport just nu
+      #
+      # State: "vinst (sol)" / "vinst (batteri)" / "förlust (batteri)" / "ej export"
+      # ------------------------------------------------------------------
+      - name: "GEN24 Export Profit Status"
+        unique_id: gen24_export_profit_status
+        icon: >
+          {% set s = states('sensor.gen24_export_profit_status') %}
+          {% if 'vinst' in s %}mdi:trending-up
+          {% elif 'förlust' in s %}mdi:trending-down
+          {% else %}mdi:minus-circle-outline{% endif %}
+        # FIX 2026-08: säljpris SEK→öre (×100) för korrekt jämförelse mot buy (öre)
+        state: >
+          {% set export_w  = states('sensor.gen24_grid_export_power') | float(0) %}
+          {% set pv_w      = states('sensor.gen24_solar_pv_power') | float(0) %}
+          {% set sell      = states('sensor.gen24_sell_price') | float(0) * 100 %}
+          {% set buy       = states('sensor.gen24_total_buy_price') | float(0) %}
+
+          {% if export_w < 50 %}
+            ej export
+          {% elif pv_w >= export_w %}
+            vinst (sol)
+          {% elif sell > buy %}
+            vinst (batteri)
+          {% else %}
+            förlust (batteri)
+          {% endif %}
+        attributes:
+          export_power_w: "{{ states('sensor.gen24_grid_export_power') | float(0) | round(0) | int }}"
+          pv_power_w: "{{ states('sensor.gen24_solar_pv_power') | float(0) | round(0) | int }}"
+          sell_ore: "{{ (states('sensor.gen24_sell_price') | float(0) * 100) | round(2) }}"
+          buy_ore: "{{ states('sensor.gen24_total_buy_price') | float(0) | round(2) }}"
+          margin_ore: "{{ states('sensor.gen24_sell_margin') | float(0) | round(2) }}"
+          breakeven_ore: "{{ states('sensor.gen24_sell_breakeven') | float(0) | round(2) }}"
+          solar_covers_export: >
+            {{ (states('sensor.gen24_solar_pv_power') | float(0)) >=
+               (states('sensor.gen24_grid_export_power') | float(0)) }}

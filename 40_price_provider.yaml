@@ -197,7 +197,6 @@ template:
           - sensor.nordpool_kwh_se3_sek_3_10_025
       - platform: time_pattern
         minutes: "/5"
- 
     sensor:
       - name: "GEN24 Spot Price"
         unique_id: gen24_spot_price
@@ -275,45 +274,54 @@ template:
             via input_number.elpris_moms.
 
   - sensor:
-      # Faktiskt säljpris = spot_ex_vat + skattereduktion + påslag (adders default 0).
-      # Återinfört: krävs för långtidsstatistik. Pris = mätvärde (measurement),
-      # inte ackumulerat. Samma mönster som Nordpool-sensorn. OBS: enheten är nu
-      # SEK/kWh (var öre/kWh) - gammal statistik måste rensas, se noter i chatt.
+      # Faktiskt säljpris = spot (EXKL MOMS) + skattereduktion + påslag.
+      # Vid försäljning får man bara spotpriset utan moms. Primär: elpris_se3
+      # (kvartspris exkl moms). Fallback: Nordpool (inkl moms) / momsfaktor.
       - name: "GEN24 Sell Price"
         unique_id: gen24_sell_price
         unit_of_measurement: "SEK/kWh"
         state_class: measurement
         icon: mdi:cash-fast
         state: >
-          {% set spot_incl_vat = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) %}
-          {% if spot_incl_vat < -900 %}
+          {% set q = states('sensor.elpris_se3') | float(-999) %}
+          {% set n = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-999) %}
+          {% set vat = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+          {% set spot_exkl = q if q > -900 else (n / vat if n > -900 else -1) %}
+          {% if spot_exkl < -900 %}
             unavailable
           {% else %}
-            {% set vat = states('input_number.elpris_moms') | float(25) / 100 %}
-            {% set spot = spot_incl_vat / (1 + vat) %}
             {% set red = states('input_number.gen24_sell_skattereduktion_sek') | float(0) %}
             {% set pas = states('input_number.gen24_sell_pslag_sek') | float(0) %}
-            {{ (spot + red + pas) | round(4) }}
+            {{ (spot_exkl + red + pas) | round(4) }}
           {% endif %}
         attributes:
-          spot_incl_vat: "{{ states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) }}"
-          spot_ex_vat: >
-            {% set vat = states('input_number.elpris_moms') | float(25) / 100 %}
-            {{ (states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(0) / (1 + vat)) | round(4) }}
-          components: "spot_ex_vat + skattereduktion + påslag"
+          spot_exkl_moms: >
+            {% set q = states('sensor.elpris_se3') | float(-999) %}
+            {% set n = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-999) %}
+            {% set vat = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+            {{ (q if q > -900 else (n / vat if n > -900 else -1)) | round(4) }}
+          source: >
+            {% set q = states('sensor.elpris_se3') | float(-999) %}
+            {% set n = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-999) %}
+            {{ 'elpris_se3' if q > -900 else ('nordpool_exkl_moms' if n > -900 else 'unavailable') }}
+          components: "spot_exkl_moms + skattereduktion + påslag"
 
-      # Dynamisk "attraktivt att sälja"-tröskel (i säljpris-termer).
-      # Primärt: dagrelativ (spot-medel * faktor) + adders  [Modell A].
-      # Fallback: fast expensive-tröskel om dagens statistik saknas.
+      # Dynamisk "attraktivt att sälja"-tröskel (EXKL MOMS, säljpris-termer).
+      # Primärt: dagrelativ (spot-medel exkl moms * faktor) + adders.
+      # Fallback: fast expensive-tröskel (exkl moms) om dagens statistik saknas.
+      # OBS: Nordpool-average är inkl moms → delas med momsfaktor.
       - name: "GEN24 Sell Threshold"
         unique_id: gen24_sell_threshold
         unit_of_measurement: "SEK/kWh"
         icon: mdi:cash-marker
         state: >
-          {% set day_avg = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) %}
+          {% set day_avg_inkl = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) %}
+          {% set vat = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+          {% set day_avg = day_avg_inkl / vat if day_avg_inkl >= 0 else -1 %}
           {% set factor = states('input_number.gen24_sell_price_factor') | float(1.15) %}
           {% set floor = states('input_number.gen24_sell_price_floor_sek') | float(0.10) %}
-          {% set fixed = states('input_number.gen24_price_expensive_threshold_sek') | float(0.80) %}
+          {% set fixed_inkl = states('input_number.gen24_price_expensive_threshold_sek') | float(0.80) %}
+          {% set fixed = fixed_inkl / vat %}
           {% set red = states('input_number.gen24_sell_skattereduktion_sek') | float(0) %}
           {% set pas = states('input_number.gen24_sell_pslag_sek') | float(0) %}
           {% set adders = red + pas %}
@@ -324,9 +332,12 @@ template:
           {% endif %}
         attributes:
           basis: >
-            {% set day_avg = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) %}
-            {{ 'day_relative' if day_avg >= 0 else 'fixed_fallback' }}
-          day_avg: "{{ state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) }}"
+            {% set day_avg_inkl = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) %}
+            {{ 'day_relative' if day_avg_inkl >= 0 else 'fixed_fallback' }}
+          day_avg_exkl_moms: >
+            {% set day_avg_inkl = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','average') | float(-1) %}
+            {% set vat = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+            {{ (day_avg_inkl / vat if day_avg_inkl >= 0 else -1) | round(4) }}
 
       # Sensorer Nordpol/elpris API för pris med moms/påslag/skatt för ekonomi kontroll
       # OBS Nordpolsensor är MED moms, elprissensor UTAN moms
@@ -473,8 +484,7 @@ template:
 
         attributes:
           source_entity: "sensor.elpris_se3"
-          source_includes_vat: >
-            false
+          source_includes_vat: false
 
           source_price_excluding_vat: >
             {{ states('sensor.elpris_se3') | float(0) | round(4) }}
@@ -692,9 +702,9 @@ template:
       # naturliga enheten där.
       #
       # TRE prisbegrepp den reder ut:
-      #   1. spot_sek        = rått Nordpool-spotpris (styrlogikens "pris")
+      #   1. spot_sek        = rått Nordpool-spotpris INKL moms (styrlogikens "pris")
       #   2. buy_total_sek   = FULL köpkostnad (spot+skatt+påslag+nät+moms)
-      #   3. sälj-sidan      = sell_gross/sell_net vs sell_threshold (lönsamhet)
+      #   3. sälj-sidan      = sell_gross/sell_net EXKL moms vs sell_threshold (lönsamhet)
       # ======================================================================
       - name: "GEN24 Price Hub"
         unique_id: gen24_price_hub
@@ -720,20 +730,44 @@ template:
           # effective_buy_price är redan SEK/kWh (nordpool_total m. fallback)
           buy_effective_sek: "{{ states('sensor.gen24_effective_buy_price') | float(-1) | round(4) }}"
 
-          # --- 3. SÄLJ (intäkt + lönsamhet) ---
-          # sell_price = rått spot + adders (drar EJ av mäklaravgift) -> "brutto"
+          # --- 3. SÄLJ (intäkt + lönsamhet, EXKL MOMS) ---
+          # OBS: Vid försäljning får man bara spotpris UTAN moms. sell_price baseras
+          # därför på spot exkl moms + adders (drar EJ av mäklaravgift) -> "brutto".
           sell_gross_sek: "{{ states('sensor.gen24_sell_price') | float(-1) | round(4) }}"
           # netto = brutto - rörlig försäljningskostnad (öre -> SEK)
           sell_net_sek: >
             {% set g = states('sensor.gen24_sell_price') | float(-1) %}
             {% set cost = states('input_number.gen24_sell_cost_ore') | float(3.71) / 100 %}
             {{ (g - cost) | round(4) if g > -900 else none }}
-          # dynamisk tröskel för "lönsamt att sälja" (i säljpris-termer)
+          # dynamisk tröskel för "lönsamt att sälja" (EXKL moms, i säljpris-termer)
           sell_threshold_sek: "{{ states('sensor.gen24_sell_threshold') | float(-1) | round(4) }}"
           # breakeven i spot-termer (öre -> SEK): spot måste över detta för vinst
           breakeven_sek: "{{ ((states('sensor.gen24_sell_breakeven') | float(-1)) / 100) | round(4) }}"
           # marginal i öre/kWh (naturlig enhet): + = vinst, - = förlust
           margin_ore: "{{ states('sensor.gen24_sell_margin') | float(0) | round(2) }}"
+
+          # --- MOMS- & PÅSLAGSMODELL (2026-08-30, explicit sanningskälla) ---
+          # GRUNDREGEL: KÖP betalas INKL moms, SÄLJ mottas EXKL moms.
+          # EN momssats för hela modellen (enda källa: input_number.elpris_moms).
+          vat_pct: "{{ states('input_number.elpris_moms') | float(25) | round(2) }}"
+          buy_includes_vat: true
+          sell_includes_vat: false
+          # Spot i BÅDA momsvarianterna (samma ögonblick, för jämförelse):
+          spot_incl_vat_sek: "{{ states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-1) | round(4) }}"
+          spot_excl_vat_sek: >
+            {% set q = states('sensor.elpris_se3') | float(-999) %}
+            {% set n = states('sensor.nordpool_kwh_se3_sek_3_10_025') | float(-999) %}
+            {% set vat = 1 + (states('input_number.elpris_moms') | float(25) / 100) %}
+            {{ (q if q > -900 else (n / vat if n > -900 else -1)) | round(4) }}
+          # KÖP-påslag (exkl moms, kr/kWh) som ingår i buy_total_sek (× (1+moms)):
+          buy_energy_tax_sek: "{{ states('input_number.elpris_energiskatt') | float(0) | round(4) }}"
+          buy_supplier_markup_sek: "{{ states('input_number.elpris_handlare_paslag') | float(0) | round(4) }}"
+          buy_grid_fee_sek: "{{ states('input_number.elpris_natavgift_rorlig') | float(0) | round(4) }}"
+          # SÄLJ-justeringar (kr/kWh, exkl moms) som ingår i sell_gross_sek:
+          sell_tax_reduction_sek: "{{ states('input_number.gen24_sell_skattereduktion_sek') | float(0) | round(4) }}"
+          sell_markup_sek: "{{ states('input_number.gen24_sell_pslag_sek') | float(0) | round(4) }}"
+          # Mäklaravgift som dras för sell_net_sek (öre -> kr):
+          sell_broker_cost_sek: "{{ (states('input_number.gen24_sell_cost_ore') | float(3.71) / 100) | round(4) }}"
 
           # --- Trösklar (för billigt/dyrt/ladda, i spot-termer) ---
           cheap_threshold_sek: "{{ states('input_number.gen24_price_cheap_threshold_sek') | float(0.50) | round(4) }}"
@@ -773,12 +807,23 @@ template:
           buy_total_ore: "{{ states('sensor.gen24_total_buy_price') | float(-1) | round(2) }}"
           # legend / hjälptext
           begrepp: >
-            spot_sek=rått Nordpool-pris (styrning) | buy_total_sek=full köpkostnad
-            (det du betalar) | sell_gross_sek=säljpris brutto | sell_net_sek=efter
-            mäklaravgift | sell_threshold_sek=lönsamhetsgräns sälj (dyn: day_avg*sell_factor,
-            golv sell_floor_sek) | charge_threshold_sek=laddgräns (dyn: clamp day_avg*charge_factor
-            inom charge_floor–ceiling) | is_cheap/expensive_categorical=spot mot fasta
-            trösklar | is_sell_profitable=lönsamt sälja nu | is_charge_now=lönsamt ladda nu
+            spot_sek=rått Nordpool-pris INKL moms (styrning) | buy_total_sek=full köpkostnad
+            INKL moms (det du betalar) | sell_gross_sek=säljpris brutto EXKL moms (vid export får man
+            bara spot utan moms) | sell_net_sek=säljpris efter mäklaravgift (EXKL moms) | sell_threshold_sek=
+            lönsamhetsgräns sälj EXKL moms (dyn: day_avg_exkl*sell_factor, golv sell_floor_sek) |
+            charge_threshold_sek=laddgräns (dyn: clamp day_avg*charge_factor inom charge_floor–ceiling) |
+            is_cheap/expensive_categorical=spot mot fasta trösklar
+          # Momsmodell och de TVÅ lönsamhetsbegreppen (skiljer sig medvetet):
+          moms_modell: >
+            KÖP betalas INKL moms (buy_*), SÄLJ mottas EXKL moms (sell_*). En momssats: vat_pct
+            (input_number.elpris_moms). Två olika "lönsamt att sälja": (1) is_sell_profitable =
+            sell_margin_ore>0 = REELL vinst mot köpkostnad (sälj_exkl − köp_inkl), styr säljbeslut
+            för nätladdat batteri. (2) sell_gross_sek>=sell_threshold_sek = ARBITRAGE-timing
+            (spot högt vs dagsmedel), används av styrlogikens sell_is_profitable. De kan skilja sig.
+          is_sell_attractive_arbitrage: >
+            {% set g = states('sensor.gen24_sell_price') | float(-999) %}
+            {% set t = states('sensor.gen24_sell_threshold') | float(999) %}
+            {{ g > -900 and g >= t }}
 
 
 # ============================================================================
