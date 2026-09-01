@@ -44,8 +44,11 @@ echo "[3/4] Kopierar in shadow-packages från GitHub..."
 rm -rf "$CONFIG_DIR/packages"
 mkdir -p "$CONFIG_DIR/packages"
 
-# Kopiera ALLA YAML-filer från repo root + sensors/ till /config/packages/
-cp -a "$REPO_DIR"/*.yaml "$CONFIG_DIR/packages/" 2>/dev/null || true
+# Kopiera YAML-filer från repo root till /config/packages/
+# OBS: lovelace/*.yaml kopieras INTE hit - de är Lovelace-kort, inte HA packages
+for f in "$REPO_DIR"/*.yaml; do
+  [ -f "$f" ] && cp -a "$f" "$CONFIG_DIR/packages/"
+done
 
 # Kopiera sensors/-mappen om den finns
 if [ -d "$REPO_DIR/sensors" ]; then
