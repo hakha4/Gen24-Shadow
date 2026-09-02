@@ -153,3 +153,40 @@ cards:
       - Reject ratio < 5 %: {{ '✅ (' + ratio | string + ' %)' if ratio < 5 else '⚠️ (' + ratio | string + ' %)' }}
       - POWER_BALANCE nära 0 %: granska quality_reason_counts ovan
       - SOURCE_SKEW nära 0 %: granska quality_reason_counts ovan
+
+  - type: markdown
+    content: |
+      ### 🧪 Reject-orsaker — visuell fördelning
+      {%- set counts = state_attr('sensor.gen24_state_evaluator', 'quality_reason_counts') %}
+      {%- set total_r = state_attr('sensor.gen24_state_evaluator', 'schema2_rejects') | int(0) %}
+      {%- set total_s = state_attr('sensor.gen24_state_evaluator', 'schema2_samples') | int(0) %}
+      {%- set icons = {
+            'OK':                '✅',
+            'POWER_BALANCE':     '⚡',
+            'SOURCE_SKEW':       '⏱️',
+            'GEN24_STALE':       '🔄',
+            'SOLARNET_STALE':    '☁️',
+            'NONFINITE_CORE':    '♾️',
+            'TIMESTAMP_MISSING': '🕐',
+            'RAW_FALLBACK':      '⚠️'
+          } %}
+      {%- if counts and counts | length > 0 and total_r > 0 %}
+      {%- set sorted = counts.items() | sort(attribute=1, reverse=true) | list %}
+      {%- set max_c = sorted[0][1] | int %}
+      {%- for reason, count in sorted %}
+      {%- set pct_r = (count / total_r * 100) | round(1) %}
+      {%- set pct_s = (count / total_s * 100) | round(2) if total_s > 0 else 0 %}
+      {%- set bar_len = ((count / max_c) * 18) | int %}
+      {%- set bar = '█' * bar_len + '░' * (18 - bar_len) %}
+      {%- set icon = icons.get(reason, '❓') %}
+      {%- set flag = ' ← HUVUDORSAK' if pct_r > 50 else ('' if pct_r < 20 else ' ← notera') %}
+      **{{ icon }} {{ reason }}**{{ flag }}
+      `{{ bar }}` {{ count }} st &nbsp;({{ pct_r }} % av rejects, {{ pct_s }} % av alla)
+      {% endfor %}
+      ---
+      _{{ total_r }} rejects / {{ total_s }} sampel sedan senaste omstart_
+      {%- else %}
+      ✅ **Inga rejects sedan omstart** — systemet kör rent på schema 2.
+
+      _{{ total_s }} sampel insamlade_
+      {%- endif %}
