@@ -146,7 +146,7 @@ cards:
       {%- endif %}
 
       **Acceptanskriterier Fas 1→2 (efter 24–48h schema 2):**
-      {%- set ratio = state_attr('sensor.gen24_state_evaluator', 'schema2_reject_ratio_pct') | default(100) | float %}
+      {%- set ratio = state_attr('sensor.gen24_state_evaluator', 'schema2_reject_ratio_pct') | float(100) %}
       {%- set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
       - Schema = 2: {{ '✅' if schema >= 2 else '⚠️ väntar på firmware 1.3.18' }}
       - commands_enabled = false: ✅
