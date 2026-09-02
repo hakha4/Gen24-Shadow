@@ -2,6 +2,11 @@
 # Read-only: publicerar inga MQTT-kommandon och anropar inga styrtjanster.
 # Ett prov skapas fran ett atomiskt JSON-meddelande fran firmware. Alla
 # effektvarden i provet kommer darfor fran exakt samma publiceringscykel.
+#
+# Firmware 1.3.18+ (schema 2) tillfogar:
+#   valid, quality_reason, residual_w, gen24_age_ms, solarnet_age_ms, source_skew_ms
+# Aldre firmware (schema < 2) far data_quality = LEGACY_SCHEMA och
+# raknas inte in i schema-2-statistiken i evaluatorn.
 
 mqtt:
   sensor:
@@ -27,16 +32,27 @@ template:
       - name: "GEN24 Shadow Decision Sample"
         unique_id: gen24_shadow_decision_sample
         icon: mdi:database-clock
-        availability: >-
-          {{ trigger.payload_json.valid | default(false) }}
+        # Alltid tillganglig nar MQTT-frame kommer (oavsett valid) sa att
+        # quality_reason kan fangas upp och raknas i evaluatorn.
+        # Datakvaliteten transporteras i attributet data_quality.
+        # Foraldrade data hanteras av snapshot_age_ms-gransen i state machine.
+        availability: "true"
         state: "{{ now().isoformat() }}"
         attributes:
           collection_stage: "2_DECISION_DATA_COLLECTION"
           commands_enabled: false
           command_topics_used: false
-          sample_schema: "{{ trigger.payload_json.schema | default(0) }}"
+          sample_schema: "{{ trigger.payload_json.schema | default(0) | int }}"
           firmware_timestamp: "{{ trigger.payload_json.firmware_timestamp | default('unknown') }}"
           collected_at: "{{ now().isoformat() }}"
+          # --- Firmware 1.3.18+ kvalitetsfalt ---
+          quality_reason: "{{ trigger.payload_json.quality_reason | default('UNKNOWN') }}"
+          # residual_w: firmwarens atomiskt beraknade restpost (schema 2 primaer kalla)
+          residual_w: "{{ trigger.payload_json.residual_w | default(99999) | float | round(1) }}"
+          gen24_age_ms: "{{ trigger.payload_json.gen24_age_ms | default(0) | int }}"
+          solarnet_age_ms: "{{ trigger.payload_json.solarnet_age_ms | default(0) | int }}"
+          source_skew_ms: "{{ trigger.payload_json.source_skew_ms | default(0) | int }}"
+          # --- Effektvarden ---
           control_mode: >-
             {{ state_attr('sensor.gen24_shadow_policy_observer', 'control_mode_live') | default('unknown', true) }}
           soc_pct: >-
@@ -62,9 +78,8 @@ template:
             {% if battery <= -100 %}CHARGING
             {% elif battery >= 100 %}DISCHARGING
             {% else %}IDLE{% endif %}
-          # Fronius-konvention i firmware: grid > 0 import, battery > 0
-          # urladdning och battery < 0 laddning. Idealt galler da
-          # load = pv + grid + battery. Residualen ar diagnostik, inte styrning.
+          # HA-beraknad residual behalles som forsvarsdjup (schema 1 fallback).
+          # For schema 2 anvands firmwarefalt residual_w som primaer kalla.
           power_balance_residual_w: >-
             {% set pv = trigger.payload_json.pv_w | float %}
             {% set grid = trigger.payload_json.grid_w | float %}
@@ -72,15 +87,13 @@ template:
             {% set battery = trigger.payload_json.battery_w | float %}
             {{ (load - pv - grid - battery) | round(1) }}
           data_quality: >-
-            {% if not (trigger.payload_json.valid | default(false)) %}
-              INVALID
+            {% set schema = trigger.payload_json.schema | default(0) | int %}
+            {% if schema < 2 %}
+              LEGACY_SCHEMA
+            {% elif not (trigger.payload_json.valid | default(false)) %}
+              {{ trigger.payload_json.quality_reason | default('INVALID') }}
             {% else %}
-              {% set pv = trigger.payload_json.pv_w | float %}
-              {% set grid = trigger.payload_json.grid_w | float %}
-              {% set load = trigger.payload_json.load_w | float %}
-              {% set battery = trigger.payload_json.battery_w | float %}
-              {% set residual = (load | float - pv | float - grid | float - battery | float) | abs %}
-              {{ 'COHERENT' if residual <= 500 else 'REVIEW_BALANCE' }}
+              COHERENT
             {% endif %}
           evaluation_status: "COLLECTING_NOT_YET_SCORED"
 
@@ -107,12 +120,20 @@ template:
         availability: >-
           {{ trigger.payload_json.valid | default(false) }}
         state: >-
-          {% set pv = trigger.payload_json.pv_w | float %}
-          {% set grid = trigger.payload_json.grid_w | float %}
-          {% set load = trigger.payload_json.load_w | float %}
-          {% set battery = trigger.payload_json.battery_w | float %}
-          {{ (load - pv - grid - battery) | round(1) }}
+          {% set schema = trigger.payload_json.schema | default(0) | int %}
+          {% if schema >= 2 %}
+            {{ trigger.payload_json.residual_w | default(99999) | float | round(1) }}
+          {% else %}
+            {% set pv = trigger.payload_json.pv_w | float %}
+            {% set grid = trigger.payload_json.grid_w | float %}
+            {% set load = trigger.payload_json.load_w | float %}
+            {% set battery = trigger.payload_json.battery_w | float %}
+            {{ (load - pv - grid - battery) | round(1) }}
+          {% endif %}
         attributes:
           quality_limit_w: 500
           firmware_timestamp: "{{ trigger.payload_json.firmware_timestamp | default('unknown') }}"
           commands_enabled: false
+          source: >-
+            {% set schema = trigger.payload_json.schema | default(0) | int %}
+            {{ 'firmware_atomic' if schema >= 2 else 'ha_computed' }}

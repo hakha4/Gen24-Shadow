@@ -79,10 +79,20 @@ template:
           observed_action: >-
             {{ state_attr('sensor.gen24_shadow_decision_sample', 'observed_action') | default('IDLE') }}
           residual_w: >-
-            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'power_balance_residual_w') %}
+            {% set raw = state_attr('sensor.gen24_shadow_decision_sample', 'residual_w') %}
             {{ raw | float if raw is not none else 99999 }}
           shadow_status: >-
             {{ states('sensor.gen24_shadow_status') | default('UNKNOWN') }}
+          quality_reason: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'quality_reason') | default('UNKNOWN') }}
+          sample_schema: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'sample_schema') | default(0) | int }}
+          gen24_age_ms: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'gen24_age_ms') | default(0) | int }}
+          solarnet_age_ms: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'solarnet_age_ms') | default(0) | int }}
+          source_skew_ms: >-
+            {{ state_attr('sensor.gen24_shadow_decision_sample', 'source_skew_ms') | default(0) | int }}
 
   - sensor:
       - name: "GEN24 State Decision"
@@ -93,7 +103,10 @@ template:
           {% set dq = state_attr(input, 'data_quality') | default('unknown') %}
           {% set age = state_attr(input, 'snapshot_age_ms') | default(99999) | int %}
           {% set shadow = state_attr(input, 'shadow_status') | default('UNKNOWN') %}
-          {% if dq != 'COHERENT' or age >= 10000 or shadow not in ['OK'] %}
+          {% set schema = state_attr(input, 'sample_schema') | default(0) | int %}
+          {% if schema < 2 %}
+            LEGACY_SCHEMA
+          {% elif dq != 'COHERENT' or age >= 10000 or shadow not in ['OK'] %}
             DATA_QUALITY_REJECT
           {% else %}
             {% set mode = state_attr(input, 'control_mode') | default('AUTO') %}
@@ -233,7 +246,7 @@ template:
           {% endif %}
         attributes:
           action: >-
-            {% if this.state == 'DATA_QUALITY_REJECT' %}BLOCK
+            {% if this.state in ['DATA_QUALITY_REJECT', 'LEGACY_SCHEMA'] %}BLOCK
             {% elif this.state in ['AUTO','MANUAL','UI_OVERRIDE'] %}IDLE
             {% elif this.state in ['SOLAR_CHARGE','NIGHT_BATTERY','CHARGE_CHEAP','DAYTIME_SMART'] %}CHARGE
             {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE'] %}DISCHARGE
@@ -245,6 +258,7 @@ template:
             {% else %}0{% endif %}
           priority: >-
             {% set priorities = {
+              'LEGACY_SCHEMA': 99,
               'DATA_QUALITY_REJECT': 99,
               'UI_OVERRIDE': 95,
               'MANUAL': 90,
@@ -262,6 +276,7 @@ template:
             {{ priorities.get(this.state, 0) }}
           reason: >-
             {% set reasons = {
+              'LEGACY_SCHEMA': 'firmware_schema_too_old',
               'DATA_QUALITY_REJECT': 'data_quality_or_stale_or_shadow_not_ok',
               'UI_OVERRIDE': 'ui_command_override',
               'MANUAL': 'control_mode_manual',
@@ -278,7 +293,7 @@ template:
             } %}
             {{ reasons.get(this.state, 'unknown') }}
           guard: >-
-            {{ this.state != 'DATA_QUALITY_REJECT' }}
+            {{ this.state not in ['DATA_QUALITY_REJECT', 'LEGACY_SCHEMA'] }}
           is_safe_to_act: >-
             {% set input = 'sensor.gen24_state_input' %}
             {% set dq = state_attr(input, 'data_quality') | default('unknown') %}

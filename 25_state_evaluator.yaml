@@ -107,3 +107,51 @@ template:
           evaluation_note: >-
             Score 0-100. 70% agreement + 30% ej-reject. agreement = vart beslut.action
             (CHARGE/DISCHARGE/IDLE) matchar firmwarens observed_action (CHARGING/DISCHARGING/IDLE).
+          # ================================================================
+          # Schema 2-filtrerad statistik (firmware 1.3.18+)
+          # Raknar bara prov dar sample_schema >= 2.
+          # LEGACY_SCHEMA raknas EJ in har.
+          # ================================================================
+          period_start: >-
+            {% set existing = this.attributes.get('period_start', '') %}
+            {% set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
+            {% set decision = states('sensor.gen24_state_decision') %}
+            {% if existing == '' and schema >= 2 and decision not in ['unavailable','unknown','none',''] %}
+              {{ now().isoformat() }}
+            {% else %}
+              {{ existing }}
+            {% endif %}
+          schema2_samples: >-
+            {% set prev = this.attributes.get('schema2_samples', 0) | int(0) %}
+            {% set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
+            {% set decision = states('sensor.gen24_state_decision') %}
+            {% if trigger is defined and trigger.id == 'state' and trigger.from_state is defined and trigger.from_state.state == trigger.to_state.state %}
+              {{ prev }}
+            {% elif schema >= 2 and decision not in ['unavailable','unknown','none',''] %}
+              {{ prev + 1 }}
+            {% else %}
+              {{ prev }}
+            {% endif %}
+          schema2_rejects: >-
+            {% set prev = this.attributes.get('schema2_rejects', 0) | int(0) %}
+            {% set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
+            {% set decision = states('sensor.gen24_state_decision') %}
+            {% if schema >= 2 and decision == 'DATA_QUALITY_REJECT' %}
+              {{ prev + 1 }}
+            {% else %}
+              {{ prev }}
+            {% endif %}
+          schema2_reject_ratio_pct: >-
+            {% set total = this.attributes.get('schema2_samples', 0) | int(0) %}
+            {% set rejects = this.attributes.get('schema2_rejects', 0) | int(0) %}
+            {% if total > 0 %}{{ (rejects / total * 100) | round(1) }}{% else %}0.0{% endif %}
+          quality_reason_counts: >-
+            {% set prev = this.attributes.get('quality_reason_counts', {}) %}
+            {% set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
+            {% set decision = states('sensor.gen24_state_decision') %}
+            {% if schema >= 2 and decision == 'DATA_QUALITY_REJECT' %}
+              {% set reason = state_attr('sensor.gen24_state_input', 'quality_reason') | default('UNKNOWN') %}
+              {{ dict(prev, **{reason: (prev.get(reason, 0) | int(0)) + 1}) }}
+            {% else %}
+              {{ prev }}
+            {% endif %}

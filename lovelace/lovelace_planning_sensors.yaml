@@ -101,3 +101,55 @@ cards:
       {%- if f in ['-1', 'unavailable', 'unknown', 'none', 'None', ''] %} Inaktiva ⚠️ (forecast = {{ f }} — kontrollera MQTT-bryggan)
       {%- else %} Evaluerbara ✅ (remaining = {{ f }} kWh)
       {%- endif %}
+
+  # ====================================================================
+  # SCHEMA 2 DIAGNOSTIK (firmware 1.3.18+)
+  # ====================================================================
+  - type: markdown
+    content: |
+      ### 🔍 Datakvalitet (schema 2 / firmware 1.3.18+)
+
+      **Schema:** {{ state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) }}
+      &nbsp;|&nbsp; **Quality Reason:** {{ state_attr('sensor.gen24_state_input', 'quality_reason') | default('–') }}
+      &nbsp;|&nbsp; **Lastkälla:** {{ state_attr('sensor.gen24_state_input', 'load_source_mode') | default('–') }}
+
+      | Diagnos | Värde | Gräns |
+      |---|---|---|
+      | GEN24 age | {{ state_attr('sensor.gen24_state_input', 'gen24_age_ms') | default(0) }} ms | < 30 000 ms |
+      | SolarNet age | {{ state_attr('sensor.gen24_state_input', 'solarnet_age_ms') | default(0) }} ms | < 30 000 ms |
+      | Source skew | {{ state_attr('sensor.gen24_state_input', 'source_skew_ms') | default(0) }} ms | < 6 000 ms |
+      | Residual (fw) | {{ state_attr('sensor.gen24_state_input', 'residual_w') | default(0) }} W | < 500 W |
+
+      **commands_enabled:** false &nbsp;|&nbsp; **Modbus:** READ-ONLY &nbsp;|&nbsp; **GEN24_CONTROL_WRITES_ENABLED:** 0
+
+  - type: markdown
+    content: |
+      ### 📈 Reject-statistik (schema 2)
+
+      **Period start:** {{ state_attr('sensor.gen24_state_evaluator', 'period_start') | default('–') }}
+
+      | Mätvärde | Värde |
+      |---|---|
+      | Schema 2 sampel | {{ state_attr('sensor.gen24_state_evaluator', 'schema2_samples') | default(0) }} |
+      | Schema 2 rejects | {{ state_attr('sensor.gen24_state_evaluator', 'schema2_rejects') | default(0) }} |
+      | **Reject ratio (s2)** | **{{ state_attr('sensor.gen24_state_evaluator', 'schema2_reject_ratio_pct') | default(0) }} %** |
+      | Reject ratio (alla) | {{ state_attr('sensor.gen24_state_evaluator', 'reject_ratio_pct') | default(0) }} % |
+
+      **Reject per orsak (schema 2):**
+      {%- set counts = state_attr('sensor.gen24_state_evaluator', 'quality_reason_counts') %}
+      {%- if counts and counts | length > 0 %}
+      {%- for reason, count in counts.items() %}
+      - {{ reason }}: {{ count }}
+      {%- endfor %}
+      {%- else %}
+      _Inga rejects ännu_
+      {%- endif %}
+
+      **Acceptanskriterier Fas 1→2 (efter 24–48h schema 2):**
+      {%- set ratio = state_attr('sensor.gen24_state_evaluator', 'schema2_reject_ratio_pct') | default(100) | float %}
+      {%- set schema = state_attr('sensor.gen24_state_input', 'sample_schema') | default(0) | int %}
+      - Schema = 2: {{ '✅' if schema >= 2 else '⚠️ väntar på firmware 1.3.18' }}
+      - commands_enabled = false: ✅
+      - Reject ratio < 5 %: {{ '✅ (' + ratio | string + ' %)' if ratio < 5 else '⚠️ (' + ratio | string + ' %)' }}
+      - POWER_BALANCE nära 0 %: granska quality_reason_counts ovan
+      - SOURCE_SKEW nära 0 %: granska quality_reason_counts ovan
