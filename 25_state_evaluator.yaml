@@ -30,6 +30,7 @@ template:
       - name: "GEN24 State Evaluator"
         unique_id: gen24_state_evaluator
         icon: mdi:chart-line
+        restore: false
         state: >-
           {% set score = this.attributes.get('decision_quality_score', 0) | int(0) %}
           {{ score }}
