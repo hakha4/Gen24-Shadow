@@ -190,3 +190,26 @@ cards:
 
       _{{ total_s }} sampel insamlade_
       {%- endif %}
+
+  - type: vertical-stack
+    cards:
+      - type: markdown
+        content: |
+          ### 🔧 Statistik-kontroll
+          
+          **Aktuell period:**
+          - Start: {{ state_attr('sensor.gen24_state_evaluator', 'period_start') | default('—') }}
+          - Sampel: {{ state_attr('sensor.gen24_state_evaluator', 'schema2_samples') | default(0) }}
+          - Reject ratio: {{ state_attr('sensor.gen24_state_evaluator', 'schema2_reject_ratio_pct') | default(0) }} %
+          
+          Tryck knappen nedan för att nollställa alla räknare och börja en ny mätperiod.
+      
+      - type: button
+        entity: input_button.gen24_reset_evaluator_stats
+        name: Nollställ statistik
+        icon: mdi:restore
+        tap_action:
+          action: call-service
+          service: input_button.press
+          service_data:
+            entity_id: input_button.gen24_reset_evaluator_stats

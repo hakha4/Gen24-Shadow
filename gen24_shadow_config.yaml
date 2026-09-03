@@ -10,6 +10,12 @@
 # Uppdatera initial-värden efter behov för teständamål.
 # =============================================================================
 
+input_button:
+
+  gen24_reset_evaluator_stats:
+    name: "🔄 Nollställ statistik"
+    icon: mdi:restore
+
 input_boolean:
 
   gen24_selfcons_enabled:

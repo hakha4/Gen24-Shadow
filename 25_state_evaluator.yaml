@@ -19,8 +19,8 @@
 
 template:
   - trigger:
-      - platform: homeassistant
-        event: start
+      - platform: state
+        entity_id: input_button.gen24_reset_evaluator_stats
         id: reset
       - platform: time_pattern
         minutes: "/1"
