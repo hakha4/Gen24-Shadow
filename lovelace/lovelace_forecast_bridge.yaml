@@ -40,7 +40,7 @@ cards:
     content: |
       **Status:** {{ 'Aktiv ✅' if states('sensor.gen24_forecast_remaining_kwh') not in ['-1', 'unavailable', 'unknown'] else 'Inaktiv ⚠️' }}
       
-      **Senaste uppdatering:** {{ relative_time(states.sensor.gen24_forecast_remaining_kwh.last_changed) }} sedan
+      **Senaste uppdatering:** {{ relative_time(states.sensor.gen24_forecast_remaining_kwh.last_changed) if states.sensor.gen24_forecast_remaining_kwh is not none else 'aldrig' }} sedan
 
   - type: conditional
     conditions:
