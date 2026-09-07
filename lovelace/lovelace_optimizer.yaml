@@ -64,8 +64,15 @@ cards:
   # --- Lookahead-vinst (B−B2) visuell indikator ---
   - type: markdown
     content: >
-      {% set b = states('input_number.gen24_opt_cost_replay')|float(0) %}
-      {% set b2 = states('input_number.gen24_opt_cost_b2')|float(0) %}
+      {% set b_raw = states('input_number.gen24_opt_cost_replay') %}
+      {% set b2_raw = states('input_number.gen24_opt_cost_b2') %}
+      {% set b = b_raw|float(0) %}
+      {% set b2 = b2_raw|float(0) %}
+      {% if b2_raw in ['unknown', 'unavailable', 'none'] or b2 == 0 %}
+      ### ⏳ Väntar på B2-data
+      B2 (lookahead) har inte skrivits än. Kontrollera att LXC-optimeraren
+      kör senaste `gen24_optimizer.py` (den som POST:ar `gen24_opt_cost_b2`).
+      {% else %}
       {% set diff = (b - b2)|round(2) %}
       {% if diff > 0.50 %}
       ### 🟢 Lookahead lönsamt! +{{ diff }} SEK/dygn
@@ -79,6 +86,7 @@ cards:
       {% else %}
       ### ⚪ Ingen tydlig skillnad: {{ diff }} SEK/dygn
       B och B2 i paritet — fortsätt samla data.
+      {% endif %}
       {% endif %}
 
   # --- Rapport ---
