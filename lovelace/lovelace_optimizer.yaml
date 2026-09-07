@@ -41,19 +41,17 @@ cards:
       - entity: input_number.gen24_opt_cost_optimal
         name: "C: Teoretiskt optimal"
         icon: mdi:star-circle
-      - type: divider
-      - type: custom:template-entity-row
-        name: "B−C gap (vårt vs optimal)"
-        icon: mdi:delta
-        state: >
-          {{ (states('input_number.gen24_opt_cost_replay')|float(0) - 
-              states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK
-      - type: custom:template-entity-row
-        name: "A−C gap (gammalt vs optimal)"
-        icon: mdi:trending-down
-        state: >
-          {{ (states('input_number.gen24_opt_cost_actual')|float(0) - 
-              states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK
+
+  # --- Gap-analys (beräknad i markdown, kräver inte custom cards) ---
+  - type: markdown
+    content: |
+      ### 📈 Gap-analys
+      
+      **B−C gap:** {{ (states('input_number.gen24_opt_cost_replay')|float(0) - states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK  
+      *(Hur mycket vår styrning tappar mot optimal)*
+      
+      **A−C gap:** {{ (states('input_number.gen24_opt_cost_actual')|float(0) - states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK  
+      *(Hur mycket gammal styrning tappar mot optimal)*
 
   # --- Lookahead-vinst (B−B2) ---
   - type: markdown
