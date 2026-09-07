@@ -1,0 +1,86 @@
+# =============================================================================
+# Lovelace-kort för EXTERN OPTIMERARE (kolumn A/B/B2/C)
+# =============================================================================
+# Manuellt kort - lägg till via Home Assistant Dashboard UI:
+#   1. Redigera dashboard → Lägg till kort → Manuellt kort
+#   2. Klistra in innehållet nedan
+#
+# Visar resultat från extern optimerare (gen24_optimizer.py i LXC):
+#   A  = faktiskt utfall (gammal styrning)
+#   B  = replay av vår state machine
+#   B2 = replay med lookahead-policy (framförhållning N timmar)
+#   C  = teoretiskt optimal (DP)
+#
+# Se: external_optimizer/README_external_optimizer.md
+# =============================================================================
+
+type: vertical-stack
+cards:
+  # --- Header ---
+  - type: markdown
+    content: |
+      ## 📊 GEN24 Optimizer (A/B/B2/C)
+      Extern optimerare – post-hoc analys av ekonomisk prestanda
+      
+      **Kolumnförklaring:**
+      - **A** = Faktiskt utfall (gammal styrning)
+      - **B** = Replay av vår state machine
+      - **B2** = Lookahead-policy (framförhållning)
+      - **C** = Teoretiskt optimal (DP)
+
+  # --- Kostnader (A/B/C) ---
+  - type: entities
+    title: 💰 Nettokostnad (SEK)
+    entities:
+      - entity: input_number.gen24_opt_cost_actual
+        name: "A: Faktiskt utfall"
+        icon: mdi:cash-minus
+      - entity: input_number.gen24_opt_cost_replay
+        name: "B: State machine replay"
+        icon: mdi:replay
+      - entity: input_number.gen24_opt_cost_optimal
+        name: "C: Teoretiskt optimal"
+        icon: mdi:star-circle
+      - type: divider
+      - type: custom:template-entity-row
+        name: "B−C gap (vårt vs optimal)"
+        icon: mdi:delta
+        state: >
+          {{ (states('input_number.gen24_opt_cost_replay')|float(0) - 
+              states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK
+      - type: custom:template-entity-row
+        name: "A−C gap (gammalt vs optimal)"
+        icon: mdi:trending-down
+        state: >
+          {{ (states('input_number.gen24_opt_cost_actual')|float(0) - 
+              states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK
+
+  # --- Lookahead-vinst (B−B2) ---
+  - type: markdown
+    content: |
+      ### 🔮 Lookahead-vinst (B−B2)
+      
+      Positiv = framförhållning hade sparat pengar mot dagens tröskel-regler.
+      
+      Se `sensor.gen24_price_lookahead` och `ps_21_price_lookahead.yaml`.
+
+  # --- Rapport ---
+  - type: entities
+    title: 📝 Senaste körning
+    entities:
+      - entity: input_text.gen24_opt_report
+        name: Rapport
+        icon: mdi:file-document-outline
+
+  # --- Användning ---
+  - type: markdown
+    content: |
+      ---
+      **Uppdateras av:** extern LXC-container (cron var 6:e timme)  
+      **Källa:** `gen24_optimizer.py` (se `external_optimizer/`)  
+      **Setup:** Se `README_external_optimizer.md`
+      
+      **Tolkning:**
+      - **B−C litet** = vår state machine nära optimal ✅
+      - **B >> A** i Fas 1 = förväntat (shadow kör IDLE) ⚠️
+      - **B−B2 > 0** = lookahead lönar sig → överväg Fas 2 🚀
