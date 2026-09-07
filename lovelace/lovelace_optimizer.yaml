@@ -53,14 +53,33 @@ cards:
       **A−C gap:** {{ (states('input_number.gen24_opt_cost_actual')|float(0) - states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK  
       *(Hur mycket gammal styrning tappar mot optimal)*
 
-  # --- Lookahead-vinst (B−B2) ---
+  # --- B2 Lookahead-entitet ---
+  - type: entities
+    title: 🔮 Lookahead-policy (B2)
+    entities:
+      - entity: input_number.gen24_opt_cost_b2
+        name: "B2: Lookahead-replay"
+        icon: mdi:crystal-ball
+
+  # --- Lookahead-vinst (B−B2) visuell indikator ---
   - type: markdown
-    content: |
-      ### 🔮 Lookahead-vinst (B−B2)
-      
-      Positiv = framförhållning hade sparat pengar mot dagens tröskel-regler.
-      
-      Se `sensor.gen24_price_lookahead` och `ps_21_price_lookahead.yaml`.
+    content: >
+      {% set b = states('input_number.gen24_opt_cost_replay')|float(0) %}
+      {% set b2 = states('input_number.gen24_opt_cost_b2')|float(0) %}
+      {% set diff = (b - b2)|round(2) %}
+      {% if diff > 0.50 %}
+      ### 🟢 Lookahead lönsamt! +{{ diff }} SEK/dygn
+      Framförhållning slår dagens tröskelregler — överväg Fas 2.
+      {% elif diff > 0.05 %}
+      ### 🟡 Svag lookahead-vinst: +{{ diff }} SEK/dygn
+      Liten fördel — fortsätt observera fler dagar.
+      {% elif diff < -0.05 %}
+      ### 🔴 Lookahead sämre: {{ diff }} SEK/dygn
+      Dagens regler fungerar bättre än framförhållning.
+      {% else %}
+      ### ⚪ Ingen tydlig skillnad: {{ diff }} SEK/dygn
+      B och B2 i paritet — fortsätt samla data.
+      {% endif %}
 
   # --- Rapport ---
   - type: entities

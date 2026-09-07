@@ -569,6 +569,8 @@ def write_results(cost_a, cost_b, cost_c, n_hours, note, dist="",
     _set_input_number("input_number.gen24_opt_cost_actual", cost_a)
     _set_input_number("input_number.gen24_opt_cost_replay", cost_b)
     _set_input_number("input_number.gen24_opt_cost_optimal", cost_c)
+    if cost_b2 is not None:
+        _set_input_number("input_number.gen24_opt_cost_b2", cost_b2)
 
     b2_line = ""
     if cost_b2 is not None:
