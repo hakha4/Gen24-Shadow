@@ -121,9 +121,21 @@ crontab -e
 |---|---|
 | **A** | Faktiskt utfall (SEK, netto) — vad den gamla styrningen kostade |
 | **B** | Replay av vår state machine (SEK, netto) — vad vår styrning skulle ha kostat |
+| **B2** | Replay med **framförhållnings-policy** (lookahead, kommande N h) — ladda i fönstrets billigaste timmar, ladda ur i de dyraste |
 | **C** | Teoretiskt optimal (SEK, netto) — med facit i hand |
 | **B−C gap** | Hur mycket vår styrning tappar mot optimal |
+| **B−B2** | **Lookahead-vinsten** — positivt = framförhållning hade sparat pengar mot dagens regler |
 | **A−C gap** | Hur mycket den gamla styrningen tappar |
+
+**Ger framförhållning mer? (B2)** Kolumn B2 speglar HA-sensorn
+`sensor.gen24_price_lookahead` (paket `sensors/ps_21_price_lookahead.yaml`):
+för varje timme tittar den kommande N timmar framåt (default 6, styrs av
+`LOOKAHEAD_HOURS` i `.env` eller `input_number.gen24_lookahead_hours` i HA) och
+laddar i billiga timmar / laddar ur i dyra. **B − B2 mäter över tid** om en
+lookahead-regel hade slagit dagens tröskel-baserade state machine. Kör var 6:e
+timme och följ B−B2 över dagar innan du bygger in lookahead i state machine
+(Fas 2). B2 mäts med samma start-SoC och terminalvärdering som B/C → direkt
+jämförbar (C ≤ B2 garanterat).
 
 Alla tre mäts på **samma villkor**: samma verkliga start-SoC och samma
 terminalvärdering av slut-SoC. Därför gäller alltid **A−C ≥ 0** och **B−C ≥ 0**

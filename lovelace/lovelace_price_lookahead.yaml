@@ -1,0 +1,71 @@
+# =============================================================================
+# lovelace_price_lookahead.yaml
+# =============================================================================
+# Kort för framförhållnings-sensorn (sensor.gen24_price_lookahead,
+# paket sensors/ps_21_price_lookahead.yaml).
+# Lägg till manuellt via dashboard (Redigera → Lägg till kort → Manuell).
+# =============================================================================
+
+type: vertical-stack
+cards:
+  - type: gauge
+    entity: sensor.gen24_price_lookahead
+    name: Prisläge just nu (0=billigast, 100=dyrast)
+    min: 0
+    max: 100
+    needle: true
+    severity:
+      green: 0
+      yellow: 34
+      red: 67
+
+  - type: entities
+    title: 🔮 Framförhållning (kommande timmar)
+    entities:
+      - entity: input_number.gen24_lookahead_hours
+        name: Fönster (timmar)
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: signal
+        name: Signal
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: price_now
+        name: Pris nu (SEK/kWh)
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: cheapest_price
+        name: Billigaste pris i fönstret
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: cheapest_hour
+        name: Billigaste timme
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: hours_to_cheapest
+        name: Timmar till billigast
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: most_expensive_price
+        name: Dyraste pris i fönstret
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: most_expensive_hour
+        name: Dyraste timme
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: hours_to_most_expensive
+        name: Timmar till dyrast
+      - type: attribute
+        entity: sensor.gen24_price_lookahead
+        attribute: wait_for_cheaper
+        name: Vänta med laddning (billigare kommer)
+
+  - type: markdown
+    content: >
+      **Så läses signalen:** CHEAPEST/CHEAP = bra läge att ladda batteriet.
+      PEAK/EXPENSIVE = spara batteriet / ladda ur. NEUTRAL = mitten.
+
+      Detta är i Fas 1 endast en **observationssensor** — den styr inget ännu.
+      Den externa optimizern (kort 8) visar kolumn **B2 lookahead** som mäter
+      om denna framförhållning hade sparat pengar (B − B2) över samma historik.

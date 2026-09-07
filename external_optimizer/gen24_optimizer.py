@@ -286,6 +286,70 @@ def build_hours(load_w, pv_w, buy_price, sell_price):
     return hours
 
 
+def replay_lookahead(hours, usable, eff, p_max, soc_init_kwh, ref_price, win_h=6):
+    """Replay med en enkel FRAMFORHALLNINGS-policy (kolumn B2).
+
+    Speglar sensor.gen24_price_lookahead: for varje timme, titta pa kommande
+    win_h timmar och avgor nuvarande timmes prisplacering (percentil):
+      * percentil <= 33 (billig)  -> ladda (om plats i batteriet)
+      * percentil >= 67 (dyr)     -> ladda ur (om energi finns)
+      * annars                    -> idle
+    Effekt begransas av p_max och SoC-grans. Netto-kostnad med samma
+    terminalvardering som A/B/C sa B2 ar direkt jamforbar.
+
+    Syfte: kvantifiera om en lookahead-regel slar den nuvarande
+    tröskel-baserade state machine (kolumn B) over samma historik.
+    Returnerar (netto_kostnad, action_fordelning_str).
+    """
+    times = sorted(hours)
+    n = len(times)
+    if n == 0:
+        return 0.0, ""
+    dt = 1.0
+    soc = soc_init_kwh
+    grid_cost_b2 = 0.0
+    counts = {"CHARGE": 0, "DISCHARGE": 0, "IDLE": 0}
+    for i, t in enumerate(times):
+        buy = hours[t]["buy"]
+        sell = hours[t]["sell"]
+        net_load = hours[t]["net"]
+        # Fonster = denna + kommande (win_h-1) timmar (buy-pris som signal).
+        window = [hours[times[j]]["buy"] for j in range(i, min(i + win_h, n))]
+        lo = min(window)
+        hi = max(window)
+        cur = buy
+        pct = 50.0 if (hi - lo) < 1e-4 else (cur - lo) / (hi - lo) * 100.0
+
+        if pct <= 33 and soc < usable:
+            # Ladda upp till p_max, begransat av kvarvarande plats.
+            room_p = (usable - soc) / (dt * eff)
+            p = min(p_max, room_p)
+            soc_before = soc
+            soc = clamp(soc + p * dt * eff, 0.0, usable)
+            stored = soc - soc_before
+            grid_kw = net_load + (stored / (dt * eff) if dt > 0 else 0.0)
+            counts["CHARGE"] += 1
+        elif pct >= 67 and soc > 0:
+            # Ladda ur for att tacka last, begransat av tillganglig energi.
+            avail_p = soc * eff / dt
+            p = min(p_max, avail_p)
+            soc_before = soc
+            soc = clamp(soc - p * dt / eff, 0.0, usable)
+            withdrawn = soc_before - soc
+            grid_kw = net_load - (withdrawn * eff / dt if dt > 0 else 0.0)
+            counts["DISCHARGE"] += 1
+        else:
+            grid_kw = net_load
+            counts["IDLE"] += 1
+        grid_cost_b2 += grid_cost(grid_kw, buy, sell, dt)
+
+    net_cost = grid_cost_b2 - (soc - soc_init_kwh) * ref_price
+    tot = sum(counts.values()) or 1
+    dist = " ".join(f"{k}={counts[k]}({counts[k]*100//tot}%)"
+                    for k in ("CHARGE", "DISCHARGE", "IDLE") if counts[k] > 0)
+    return net_cost, dist
+
+
 def main():
     if not HA_TOKEN:
         print("FEL: HA_TOKEN saknas. Satt miljovariabeln.")
@@ -429,6 +493,12 @@ def main():
     hours = build_hours(load_w, pv_w, buy_price, sell_price)
     cost_c, soc_end_c = dp_optimal(hours, USABLE, EFF, P_MAX_KW, soc_start_kwh, ref_price)
 
+    # --- Kolumn B2: replay med framforhallnings-policy (lookahead) ---------
+    win_h = int(os.environ.get("LOOKAHEAD_HOURS", "6"))
+    cost_b2, dist_b2 = replay_lookahead(hours, USABLE, EFF, P_MAX_KW,
+                                        soc_start_kwh, ref_price, win_h)
+    print(f"  lookahead-replay ({win_h}h) action-fordelning: {dist_b2}")
+
     # --- Action-fordelning (for tolkning av B) ----------------------------
     tot_actions = sum(action_counts.values()) or 1
     dist = " ".join(
@@ -439,7 +509,8 @@ def main():
     print(f"  shadow-action-fordelning: {dist}")
 
     # --- Skriv resultat ---------------------------------------------------
-    write_results(cost_a, cost_b, cost_c, len(hours), "ok", dist)
+    write_results(cost_a, cost_b, cost_c, len(hours), "ok", dist,
+                  cost_b2=cost_b2, win_h=win_h)
 
 
 def write_report_only(n_hours, note):
@@ -459,12 +530,20 @@ def write_report_only(n_hours, note):
         print(f"  FEL vid skrivning till input_text.gen24_opt_report: {e}")
 
 
-def write_results(cost_a, cost_b, cost_c, n_hours, note, dist=""):
-    print(f"A faktiskt: {cost_a:.2f} SEK")
-    print(f"B replay:   {cost_b:.2f} SEK")
-    print(f"C optimal:  {cost_c:.2f} SEK")
-    print(f"B-C gap:    {cost_b - cost_c:.2f} SEK")
-    print(f"A-C gap:    {cost_a - cost_c:.2f} SEK")
+def write_results(cost_a, cost_b, cost_c, n_hours, note, dist="",
+                  cost_b2=None, win_h=6):
+    print(f"A faktiskt:      {cost_a:.2f} SEK")
+    print(f"B replay:        {cost_b:.2f} SEK")
+    if cost_b2 is not None:
+        print(f"B2 lookahead {win_h}h: {cost_b2:.2f} SEK")
+    print(f"C optimal:       {cost_c:.2f} SEK")
+    print(f"B-C gap:         {cost_b - cost_c:.2f} SEK")
+    if cost_b2 is not None:
+        print(f"B2-C gap:        {cost_b2 - cost_c:.2f} SEK")
+        print(f"B-B2 (lookahead-vinst): {cost_b - cost_b2:.2f} SEK "
+              f"({'+' if cost_b - cost_b2 >= 0 else ''}{cost_b - cost_b2:.2f} = "
+              f"{'lookahead battre' if cost_b - cost_b2 > 0.01 else 'ingen vinst'})")
+    print(f"A-C gap:         {cost_a - cost_c:.2f} SEK")
     print(f"timmar: {n_hours} ({note})")
 
     def _set_input_number(entity_id, value):
@@ -491,10 +570,15 @@ def write_results(cost_a, cost_b, cost_c, n_hours, note, dist=""):
     _set_input_number("input_number.gen24_opt_cost_replay", cost_b)
     _set_input_number("input_number.gen24_opt_cost_optimal", cost_c)
 
+    b2_line = ""
+    if cost_b2 is not None:
+        b2_line = (f"B2 lookahead {win_h}h: {cost_b2:.2f} SEK "
+                   f"(vinst {cost_b - cost_b2:+.2f})\n")
     report = (
         f"GEN24 optimering {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
         f"A faktiskt: {cost_a:.2f} SEK\n"
         f"B replay:   {cost_b:.2f} SEK\n"
+        f"{b2_line}"
         f"C optimal:  {cost_c:.2f} SEK\n"
         f"B-C gap:    {cost_b - cost_c:.2f} SEK\n"
         f"A-C gap:    {cost_a - cost_c:.2f} SEK\n"

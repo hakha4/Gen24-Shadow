@@ -1,0 +1,246 @@
+# =============================================================================
+# sensors/ps_21_price_lookahead.yaml
+# =============================================================================
+# FRAMFÖRHÅLLNINGS-SENSOR (prisprognos, kommande N timmar)
+#
+# Läser Nordpool raw_today + raw_tomorrow och räknar ut, för ett rullande
+# fönster på kommande N timmar (default 6):
+#   - billigaste timmen (pris + klockslag + timmar kvar dit)
+#   - dyraste timmen   (pris + klockslag + timmar kvar dit)
+#   - nuvarande timmes placering i fönstret (percentil 0..100)
+#   - en beslutssignal (CHEAPEST / CHEAP / NEUTRAL / EXPENSIVE / PEAK)
+#
+# SYFTE (Fas 1, read-only): ge state machine en framåtblick i stället för
+# bara "pris just nu". Idag laddar/urladdar regelmotorn på statiska trösklar
+# utan att veta om en billigare/dyrare timme är på väg. Denna sensor loggas
+# nu så vi kan MÄTA över tid om en framförhållnings-policy hade gett mer
+# (jämför i extern optimizer: replay med vs utan lookahead).
+#
+# INGA kommandon skickas. Rena beräkningar. Om Nordpool saknar data faller
+# sensorn tillbaka på 'unknown' och signal='NO_DATA'.
+#
+# Källa: sensor.nordpool_kwh_se3_sek_3_10_025 (attribut raw_today/raw_tomorrow;
+#        värden i SEK/kWh INKL moms, samma som styrkällan i 40_price_provider).
+# Fönsterlängd: input_number.gen24_lookahead_hours (default 6).
+# =============================================================================
+
+input_number:
+  gen24_lookahead_hours:
+    name: "GEN24 Framförhållning: fönster (timmar)"
+    min: 2
+    max: 24
+    step: 1
+    initial: 6
+    unit_of_measurement: "h"
+    icon: mdi:clock-time-eight-outline
+
+template:
+  - sensor:
+      # -----------------------------------------------------------------
+      # HUVUDSENSOR: nuvarande timmes placering i kommande N-timmarsfönster
+      # State = percentil 0..100 (0 = billigaste timmen, 100 = dyraste).
+      # Alla detaljer i attributen.
+      # -----------------------------------------------------------------
+      - name: "GEN24 Price Lookahead"
+        unique_id: gen24_price_lookahead
+        unit_of_measurement: "%"
+        icon: mdi:chart-timeline-variant
+        availability: >
+          {{ state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today')
+             is not none }}
+        state: >
+          {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+          {% set raw_t = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [] %}
+          {% set raw_m = state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or [] %}
+          {% set raw = raw_t + raw_m %}
+          {% set now_ts = as_timestamp(now()) %}
+          {% set end_ts = now_ts + win * 3600 %}
+          {% set ns = namespace(vals=[], cur=none) %}
+          {% for it in raw %}
+            {% set s = as_timestamp(as_datetime(it.start)) %}
+            {% set e = as_timestamp(as_datetime(it.end)) %}
+            {% set v = it.value | float(-999) %}
+            {% if v > -900 and e > now_ts and s < end_ts %}
+              {% set ns.vals = ns.vals + [v] %}
+              {% if s <= now_ts and e > now_ts %}
+                {% set ns.cur = v %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {% if ns.vals | length == 0 or ns.cur is none %}
+            {{ none }}
+          {% else %}
+            {% set lo = ns.vals | min %}
+            {% set hi = ns.vals | max %}
+            {% if (hi - lo) < 0.0001 %}
+              {{ 50 }}
+            {% else %}
+              {{ (((ns.cur - lo) / (hi - lo)) * 100) | round(0) | int }}
+            {% endif %}
+          {% endif %}
+        attributes:
+          window_hours: >
+            {{ states('input_number.gen24_lookahead_hours') | int(6) }}
+
+          # ---- rådata-samling för fönstret (intern) ----
+          price_now: >
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set ns = namespace(cur=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% if s <= now_ts and e > now_ts %}{% set ns.cur = it.value | float(-999) %}{% endif %}
+            {% endfor %}
+            {{ ns.cur | round(4) if ns.cur is not none else none }}
+
+          cheapest_price: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v < ns.best %}{% set ns.best = v %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.best | round(4) if ns.best is not none else none }}
+
+          most_expensive_price: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v > ns.best %}{% set ns.best = v %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.best | round(4) if ns.best is not none else none }}
+
+          cheapest_hour: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none, ts=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v < ns.best %}{% set ns.best = v %}{% set ns.ts = s %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.ts | timestamp_custom('%H:%M', true) if ns.ts is not none else 'n/a' }}
+
+          most_expensive_hour: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none, ts=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v > ns.best %}{% set ns.best = v %}{% set ns.ts = s %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.ts | timestamp_custom('%H:%M', true) if ns.ts is not none else 'n/a' }}
+
+          hours_to_cheapest: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none, ts=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v < ns.best %}{% set ns.best = v %}{% set ns.ts = s %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ (((ns.ts - now_ts) / 3600) | round(1)) if ns.ts is not none else -1 }}
+
+          hours_to_most_expensive: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(best=none, ts=none) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}
+                {% if ns.best is none or v > ns.best %}{% set ns.best = v %}{% set ns.ts = s %}{% endif %}
+              {% endif %}
+            {% endfor %}
+            {{ (((ns.ts - now_ts) / 3600) | round(1)) if ns.ts is not none else -1 }}
+
+          hours_available: >
+            {% set win = states('input_number.gen24_lookahead_hours') | int(6) %}
+            {% set raw = (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_today') or [])
+                       + (state_attr('sensor.nordpool_kwh_se3_sek_3_10_025','raw_tomorrow') or []) %}
+            {% set now_ts = as_timestamp(now()) %}
+            {% set end_ts = now_ts + win * 3600 %}
+            {% set ns = namespace(n=0) %}
+            {% for it in raw %}
+              {% set s = as_timestamp(as_datetime(it.start)) %}
+              {% set e = as_timestamp(as_datetime(it.end)) %}
+              {% set v = it.value | float(-999) %}
+              {% if v > -900 and e > now_ts and s < end_ts %}{% set ns.n = ns.n + 1 %}{% endif %}
+            {% endfor %}
+            {{ ns.n }}
+
+          # ---- beslutssignal (för framtida state machine / manuell tolkning) ----
+          # CHEAPEST : nu är fönstrets billigaste timme  -> bra att ladda
+          # CHEAP    : nu i nedre tredjedelen            -> ok att ladda
+          # NEUTRAL  : mitten
+          # EXPENSIVE: övre tredjedelen                  -> spara batteriet
+          # PEAK     : nu är fönstrets dyraste timme     -> bra att ladda ur
+          signal: >
+            {% set pct = states('sensor.gen24_price_lookahead') | float(-1) %}
+            {% if pct < 0 %}NO_DATA
+            {% elif pct <= 1 %}CHEAPEST
+            {% elif pct <= 33 %}CHEAP
+            {% elif pct < 67 %}NEUTRAL
+            {% elif pct < 99 %}EXPENSIVE
+            {% else %}PEAK
+            {% endif %}
+
+          # Praktiska boolska hjälpsignaler
+          is_cheapest_now: >
+            {% set pct = states('sensor.gen24_price_lookahead') | float(-1) %}
+            {{ pct >= 0 and pct <= 1 }}
+          is_peak_now: >
+            {% set pct = states('sensor.gen24_price_lookahead') | float(-1) %}
+            {{ pct >= 99 }}
+          # "vänta med att ladda": en märkbart billigare timme kommer i fönstret
+          wait_for_cheaper: >
+            {% set now_p = state_attr('sensor.gen24_price_lookahead','price_now') | float(-1) %}
+            {% set cheap = state_attr('sensor.gen24_price_lookahead','cheapest_price') | float(-1) %}
+            {% set h2c = state_attr('sensor.gen24_price_lookahead','hours_to_cheapest') | float(-1) %}
+            {{ now_p > 0 and cheap > 0 and h2c > 0 and (now_p - cheap) >= 0.10 }}
+          description: >
+            State = nuvarande timmes prispercentil i kommande N-timmarsfönstret
+            (0=billigast, 100=dyrast). Läs 'signal' för beslutssammanfattning.
