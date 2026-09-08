@@ -27,6 +27,7 @@ class OptimizerTests(unittest.TestCase):
         prices = [(t, 1.0) for t, _ in points]
         hours = build_hours(points, pv, prices, prices, start, end)
         self.assertEqual(24, len(hours))
+        self.assertAlmostEqual(24.0, sum(v["dt"] for v in hours.values()))
 
     def test_interval_crossing_hour_boundary_is_split(self):
         z = datetime.timezone.utc
@@ -38,7 +39,22 @@ class OptimizerTests(unittest.TestCase):
         prices = [(t, 1.5) for t in times]
         hours = build_hours(load, pv, prices, prices, start, end)
         self.assertEqual(3, len(hours))
+        self.assertAlmostEqual(2.0, sum(v["dt"] for v in hours.values()))
         self.assertTrue(all(abs(v["net"] - 1.5) < 1e-9 for v in hours.values()))
+
+    def test_partial_edge_buckets_keep_exact_window_duration(self):
+        z = datetime.timezone.utc
+        start = datetime.datetime(2026, 9, 7, 9, 19, tzinfo=z)
+        end = start + datetime.timedelta(hours=24)
+        points = [
+            (start.isoformat(), 1000.0),
+            (end.isoformat(), 1000.0),
+        ]
+        zeros = [(t, 0.0) for t, _ in points]
+        prices = [(t, 1.0) for t, _ in points]
+        hours = build_hours(points, zeros, prices, prices, start, end)
+        self.assertEqual(25, len(hours))
+        self.assertAlmostEqual(24.0, sum(v["dt"] for v in hours.values()))
 
     def test_dp_remains_a_lower_bound_for_idle(self):
         z = datetime.timezone.utc
