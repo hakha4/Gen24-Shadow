@@ -32,6 +32,7 @@ import os
 import sys
 import datetime
 import time
+from urllib.parse import quote, urlencode
 import requests
 
 # --- Konfiguration ---------------------------------------------------------
@@ -92,11 +93,21 @@ def get_state(entity):
         return None
 
 
+def history_path(entity, start, end, minimal_response=False):
+    """Bygg en HA history-URL utan att '+' i tidszonen blir blanksteg."""
+    start_iso = quote(start.isoformat(), safe=":")
+    params = {
+        "end_time": end.isoformat(),
+        "filter_entity_id": entity,
+    }
+    if minimal_response:
+        params["minimal_response"] = ""
+    return f"/api/history/period/{start_iso}?{urlencode(params)}"
+
+
 def get_history(entity, start, end):
     """Hamta historik for en entitet via /api/history/period."""
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
-    path = f"/api/history/period/{start_iso}?end_time={end_iso}&filter_entity_id={entity}&minimal_response"
+    path = history_path(entity, start, end, minimal_response=True)
     try:
         data = api_get(path)
         if not data:
@@ -117,9 +128,7 @@ def get_history(entity, start, end):
 
 def get_history_attr(entity, attr, start, end):
     """Hamta historik for ett attribut (t.ex. pv_w, load_w)."""
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
-    path = f"/api/history/period/{start_iso}?end_time={end_iso}&filter_entity_id={entity}"
+    path = history_path(entity, start, end)
     try:
         data = api_get(path)
         if not data:
@@ -143,9 +152,7 @@ def get_history_attr(entity, attr, start, end):
 
 def get_history_attr_str(entity, attr, start, end):
     """Hamta historik for ett str-attribut (t.ex. action)."""
-    start_iso = start.isoformat()
-    end_iso = end.isoformat()
-    path = f"/api/history/period/{start_iso}?end_time={end_iso}&filter_entity_id={entity}"
+    path = history_path(entity, start, end)
     try:
         data = api_get(path)
         if not data:
@@ -630,3 +637,4 @@ if __name__ == "__main__":
 # BUG 4 (nytt): loggar shadow-action-fordelning sa man ser om B replayar en
 #   passiv (AUTO/IDLE) strategi -> forklarar B >> A i Fas 1 (read-only).
 # =============================================================================
+
