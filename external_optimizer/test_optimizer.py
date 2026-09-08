@@ -5,10 +5,20 @@ import unittest
 
 sys.modules.setdefault("requests", types.SimpleNamespace())
 
-from gen24_optimizer import build_hours, dp_optimal
+from gen24_optimizer import build_hours, dp_optimal, history_path
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_history_path_encodes_timezone_plus(self):
+        z = datetime.timezone.utc
+        start = datetime.datetime(2026, 9, 7, 9, 1, tzinfo=z)
+        end = start + datetime.timedelta(hours=24)
+        path = history_path("sensor.gen24_state_input", start, end, True)
+        self.assertIn("09:01:00%2B00:00", path)
+        self.assertIn("end_time=2026-09-08T09%3A01%3A00%2B00%3A00", path)
+        self.assertNotIn("+00:00", path)
+        self.assertIn("minimal_response=", path)
+
     def test_exact_24_hour_window_has_24_buckets(self):
         start = datetime.datetime(2026, 9, 7, 7, 0, tzinfo=datetime.timezone.utc)
         end = start + datetime.timedelta(hours=24)
@@ -40,3 +50,4 @@ class OptimizerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
