@@ -28,6 +28,24 @@ cards:
       - **B2** = Lookahead-policy (framförhållning)
       - **C** = Teoretiskt optimal (DP)
 
+      **Driftläge:** READ-ONLY — kortet visar analys och börvärden, inga kommandon.
+
+  # --- Aktuellt read-only-beslut ---
+  - type: markdown
+    content: |
+      ### 🧠 State machine – aktuellt börvärde
+
+      | Fält | Värde |
+      |---|---|
+      | Tillstånd | {{ states('sensor.gen24_state_decision') }} |
+      | Åtgärd | {{ state_attr('sensor.gen24_state_decision', 'action') | default('—') }} |
+      | Önskad effekt | {{ state_attr('sensor.gen24_state_decision', 'power_w') | default(0) }} W |
+      | Effektkälla | {{ state_attr('sensor.gen24_state_decision', 'power_source') | default('legacy/observerad') }} |
+      | Orsak | `{{ state_attr('sensor.gen24_state_decision', 'reason') | default('—') }}` |
+      **Säkert att agera:** {{ state_attr('sensor.gen24_state_decision', 'is_safe_to_act') | default(false) }}
+
+      `commands_enabled=false` · Dispatcher ej aktiverad · Inga Modbus-skrivningar
+
   # --- Kostnader (A/B/C) ---
   - type: entities
     title: 💰 Nettokostnad (SEK)
@@ -52,6 +70,9 @@ cards:
       
       **A−C gap:** {{ (states('input_number.gen24_opt_cost_actual')|float(0) - states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK  
       *(Hur mycket gammal styrning tappar mot optimal)*
+
+      **B2−C gap:** {{ (states('input_number.gen24_opt_cost_b2')|float(0) - states('input_number.gen24_opt_cost_optimal')|float(0)) | round(2) }} SEK
+      *(Hur långt lookahead ligger från facitoptimum)*
 
   # --- B2 Lookahead-entitet ---
   - type: entities
@@ -97,15 +118,35 @@ cards:
         name: Rapport
         icon: mdi:file-document-outline
 
+  - type: markdown
+    content: |
+      ### ⏱️ Körstatus
+      **Senast mottaget resultat:**
+      {% set e = states.input_text.gen24_opt_report %}
+      {% if e is not none %}
+      {{ as_local(e.last_changed).strftime('%Y-%m-%d %H:%M:%S') }}
+      {% else %}
+      Saknas
+      {% endif %}
+
+      {% set age_min = ((as_timestamp(now()) - as_timestamp(e.last_changed)) / 60) if e is not none else 9999 %}
+      {% if age_min <= 90 %}
+      🟢 Resultatet är färskt ({{ age_min | round(0) }} min)
+      {% else %}
+      🔴 Resultatet är för gammalt ({{ age_min | round(0) }} min)
+      {% endif %}
+
   # --- Användning ---
   - type: markdown
     content: |
       ---
-      **Uppdateras av:** extern LXC-container (cron var 6:e timme)  
-      **Källa:** `gen24_optimizer.py` (se `external_optimizer/`)  
+      **Uppdateras av:** extern LXC-container (cron varje heltimme)
+
+      **Källa:** `gen24_optimizer.py` (se `external_optimizer/`)
+
       **Setup:** Se `README_external_optimizer.md`
       
       **Tolkning:**
       - **B−C litet** = vår state machine nära optimal ✅
-      - **B >> A** i Fas 1 = förväntat (shadow kör IDLE) ⚠️
+      - **B med mest BLOCK/AUTO/IDLE** = passiv referens, inte färdig policy ⚠️
       - **B−B2 > 0** = lookahead lönar sig → överväg Fas 2 🚀

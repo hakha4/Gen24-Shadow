@@ -31,6 +31,7 @@ Konfiguration via miljovariabler:
 import os
 import sys
 import datetime
+import time
 import requests
 
 # --- Konfiguration ---------------------------------------------------------
@@ -250,30 +251,37 @@ def dp_optimal(hours, usable, eff, p_max, soc_init_kwh, ref_price, k=200):
     return net_cost, soc_levels[best_idx]
 
 
-def build_hours(load_w, pv_w, buy_price, sell_price):
-    """Aggregera till timmar med TIDSVIKTAT kop/saljpris och medel-nettolast."""
+def build_hours(load_w, pv_w, buy_price, sell_price, start=None, end=None):
+    """Aggregera exakt [start, end) till timbucketar med tidsviktade varden."""
     acc = {}
-    prev_ts = None
-    for ts, vals in merge(load_w, pv_w, buy_price, sell_price):
-        l = (vals[0] or 0.0) / 1000.0
-        pv_kw = (vals[1] or 0.0) / 1000.0
-        buy = vals[2] or 0.0
-        sell = vals[3] or 0.0
-        cur = datetime.datetime.fromisoformat(ts)
-        if prev_ts is None:
-            prev_ts = cur
+    points = merge(load_w, pv_w, buy_price, sell_price)
+    for i in range(len(points) - 1):
+        ts, vals = points[i]
+        next_ts = points[i + 1][0]
+        if any(v is None for v in vals):
             continue
-        dt = (cur - prev_ts).total_seconds() / 3600.0
-        prev_ts = cur
-        if dt <= 0:
+        left = datetime.datetime.fromisoformat(ts)
+        right = datetime.datetime.fromisoformat(next_ts)
+        if start is not None:
+            left = max(left, start)
+        if end is not None:
+            right = min(right, end)
+        if right <= left:
             continue
-        h = cur.replace(minute=0, second=0, microsecond=0)
-        if h not in acc:
-            acc[h] = {"net_wsum": 0.0, "buy_wsum": 0.0, "sell_wsum": 0.0, "dt": 0.0}
-        acc[h]["net_wsum"] += (l - pv_kw) * dt
-        acc[h]["buy_wsum"] += buy * dt
-        acc[h]["sell_wsum"] += sell * dt
-        acc[h]["dt"] += dt
+        l, pv_kw = float(vals[0]) / 1000.0, float(vals[1]) / 1000.0
+        buy, sell = float(vals[2]), float(vals[3])
+        while left < right:
+            h = left.replace(minute=0, second=0, microsecond=0)
+            boundary = h + datetime.timedelta(hours=1)
+            segment_end = min(right, boundary)
+            dt = (segment_end - left).total_seconds() / 3600.0
+            a = acc.setdefault(h, {"net_wsum": 0.0, "buy_wsum": 0.0,
+                                   "sell_wsum": 0.0, "dt": 0.0})
+            a["net_wsum"] += (l - pv_kw) * dt
+            a["buy_wsum"] += buy * dt
+            a["sell_wsum"] += sell * dt
+            a["dt"] += dt
+            left = segment_end
     hours = {}
     for h, a in acc.items():
         if a["dt"] <= 0:
@@ -358,7 +366,9 @@ def main():
     print(f"GEN24 optimerare v2 - {HOURS}h historik")
     print(f"HA: {HA_URL}  ref_price_mode={REF_PRICE_MODE}")
 
-    end = datetime.datetime.now()
+    # Aware lokal tid undviker jämförelsefel mot HA:s ISO8601-tidsstämplar
+    # (som normalt innehåller UTC-offset).
+    end = datetime.datetime.now().astimezone()
     start = end - datetime.timedelta(hours=HOURS)
 
     # --- Hamta data --------------------------------------------------------
@@ -490,7 +500,7 @@ def main():
     cost_b = grid_cost_b - (soc_b - soc_start_kwh) * ref_price
 
     # --- Kolumn C: teoretiskt optimal (DP, netto) -------------------------
-    hours = build_hours(load_w, pv_w, buy_price, sell_price)
+    hours = build_hours(load_w, pv_w, buy_price, sell_price, start, end)
     cost_c, soc_end_c = dp_optimal(hours, USABLE, EFF, P_MAX_KW, soc_start_kwh, ref_price)
 
     # --- Kolumn B2: replay med framforhallnings-policy (lookahead) ---------
@@ -591,7 +601,19 @@ def write_results(cost_a, cost_b, cost_c, n_hours, note, dist="",
 
 
 if __name__ == "__main__":
-    main()
+    run_started = datetime.datetime.now(datetime.timezone.utc)
+    monotonic_started = time.monotonic()
+    run_status = "OK"
+    print(f"RUN_START utc={run_started.isoformat()}")
+    try:
+        main()
+    except Exception:
+        run_status = "ERROR"
+        raise
+    finally:
+        elapsed = time.monotonic() - monotonic_started
+        print(f"RUN_END status={run_status} runtime_s={elapsed:.3f} "
+              f"utc={datetime.datetime.now(datetime.timezone.utc).isoformat()}")
 
 # =============================================================================
 # CHANGELOG v1 -> v2

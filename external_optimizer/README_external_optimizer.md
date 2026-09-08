@@ -16,7 +16,7 @@ Assistant via REST API. Detta undviker HA:s begränsade `python_script`-miljö
 
 ```
 [Proxmox LXC]  gen24_optimizer.py  --REST-->  Home Assistant (.123)
-   cron var 6:e timme                        |  läser historik (PV, last, grid, pris, beslut, soc)
+   cron varje timme                          |  läser historik (PV, last, grid, pris, beslut, soc)
                                               |  skriver resultat till:
                                               |    input_number.gen24_opt_cost_actual/_replay/_optimal
                                               |    input_text.gen24_opt_report
@@ -111,8 +111,8 @@ och de ska dyka upp i HA-panelen (kort 8 "GEN24 Optimizer").
 
 ```bash
 crontab -e
-# kör var 6:e timme
-0 */6 * * * cd /opt/gen24_optimizer && set -a && source .env && set +a && venv/bin/python3 gen24_optimizer.py >> /var/log/gen24_optimizer.log 2>&1
+# kör varje timme; flock hindrar överlappande körningar
+0 * * * * flock -n /run/gen24_optimizer.lock bash -lc 'cd /opt/gen24_optimizer && set -a && source .env && set +a && venv/bin/python3 gen24_optimizer.py' >> /var/log/gen24_optimizer.log 2>&1
 ```
 
 ## 7. Tolkning av resultat

@@ -205,7 +205,7 @@ template:
               {% if manuell and daytime and soc < soc_max and export_w >= solar_min_w %}
                 {% set ns.candidates = ns.candidates + [(64, 'SOLAR_CHARGE')] %}
               {% endif %}
-              {# --- CHARGE_CHEAP (60) --- #}
+              {# --- CHARGE_CHEAP (61) --- #}
               {% set charge_thr = states('sensor.gen24_charge_threshold') %}
               {% set cheap_th = (charge_thr | float) if charge_thr not in ['unknown','unavailable','none',''] else (states('input_number.gen24_price_cheap_threshold_sek') | float(0.50)) %}
               {% set charge_target = states('sensor.gen24_charge_target_soc') | float(dyn_target) %}
@@ -217,7 +217,7 @@ template:
               {% if soc < charge_target %}{% set charge_bias = charge_bias + 10 %}{% endif %}
               {% set price_is_cheap = nordpool >= 0 and nordpool < cheap_th %}
               {% if manuell and fast and soc < charge_target and price_is_cheap and charge_bias >= 20 %}
-                {% set ns.candidates = ns.candidates + [(60, 'CHARGE_CHEAP')] %}
+                {% set ns.candidates = ns.candidates + [(61, 'CHARGE_CHEAP')] %}
               {% endif %}
               {# --- DAYTIME_SMART (60) --- #}
               {% set very_cheap_ratio = states('input_number.gen24_price_very_cheap_ratio') | float(0.50) %}
@@ -248,14 +248,34 @@ template:
           action: >-
             {% if this.state in ['DATA_QUALITY_REJECT', 'LEGACY_SCHEMA'] %}BLOCK
             {% elif this.state in ['AUTO','MANUAL','UI_OVERRIDE'] %}IDLE
-            {% elif this.state in ['SOLAR_CHARGE','NIGHT_BATTERY','CHARGE_CHEAP','DAYTIME_SMART'] %}CHARGE
-            {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE'] %}DISCHARGE
+            {% elif this.state in ['SOLAR_CHARGE','CHARGE_CHEAP','DAYTIME_SMART'] %}CHARGE
+            {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE','NIGHT_BATTERY'] %}DISCHARGE
             {% else %}IDLE{% endif %}
           power_w: >-
-            {% set battery = state_attr('sensor.gen24_state_input', 'battery_w') | default(0) | float %}
-            {% if this.state in ['SOLAR_CHARGE','NIGHT_BATTERY','CHARGE_CHEAP','DAYTIME_SMART'] %}{{ (-battery) | abs | int }}
-            {% elif this.state in ['EXPORT','SELF_CONS_DAY','SELF_CONS_NIGHT','PEAK_SHAVE'] %}{{ battery | int }}
-            {% else %}0{% endif %}
+            {% set input = 'sensor.gen24_state_input' %}
+            {% set grid = state_attr(input, 'grid_w') | default(0) | float %}
+            {% set limit_kw = states('sensor.gen24_peak_limit_active') | float(0) %}
+            {% set margin_kw = states('input_number.gen24_peak_margin_kw') | float(0.30) %}
+            {% set peak_target_w = ([limit_kw - margin_kw, 0] | max) * 1000 %}
+            {% set export_w = states('sensor.gen24_grid_export_power') | float(0) %}
+            {% set desired = namespace(w=0) %}
+            {% if this.state == 'PEAK_SHAVE' %}
+              {% set desired.w = [[grid - peak_target_w, 0] | max, 3500] | min %}
+            {% elif this.state == 'EXPORT' %}
+              {% set desired.w = 1500 %}
+            {% elif this.state in ['SELF_CONS_DAY','SELF_CONS_NIGHT'] %}
+              {% set desired.w = [[grid, 0] | max, 2000] | min %}
+            {% elif this.state == 'NIGHT_BATTERY' %}
+              {% set desired.w = [[grid, 0] | max, 1500] | min %}
+            {% elif this.state == 'SOLAR_CHARGE' %}
+              {% set desired.w = [[export_w, 0] | max, 3500] | min %}
+            {% elif this.state == 'CHARGE_CHEAP' %}
+              {% set desired.w = 2500 %}
+            {% elif this.state == 'DAYTIME_SMART' %}
+              {% set desired.w = 1500 %}
+            {% endif %}
+            {{ desired.w | round(0) | int }}
+          power_source: "policy_setpoint_v1"
           priority: >-
             {% set priorities = {
               'LEGACY_SCHEMA': 99,
@@ -268,7 +288,7 @@ template:
               'SELF_CONS_NIGHT': 66,
               'NIGHT_BATTERY': 70,
               'SOLAR_CHARGE': 64,
-              'CHARGE_CHEAP': 60,
+              'CHARGE_CHEAP': 61,
               'DAYTIME_SMART': 60,
               'AUTO': 10,
               'IDLE': 0
