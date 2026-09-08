@@ -200,12 +200,11 @@ def dp_optimal(hours, usable, eff, p_max, soc_init_kwh, ref_price, k=200):
     n = len(times)
     if n == 0:
         return 0.0, soc_init_kwh
-    dt = 1.0
     soc_levels = [usable * i / (k - 1) for i in range(k)]
     start_idx = min(range(k), key=lambda i: abs(soc_levels[i] - soc_init_kwh))
     INF = float("inf")
 
-    def trans_cost(s_prev, s, L, buy, sell):
+    def trans_cost(s_prev, s, L, buy, sell, dt):
         if s >= s_prev:
             p = (s - s_prev) / (dt * eff)
         else:
@@ -218,9 +217,10 @@ def dp_optimal(hours, usable, eff, p_max, soc_init_kwh, ref_price, k=200):
     L0 = hours[times[0]]["net"]
     buy0 = hours[times[0]]["buy"]
     sell0 = hours[times[0]]["sell"]
+    dt0 = hours[times[0]].get("dt", 1.0)
     dp = [INF] * k
     for i in range(k):
-        c = trans_cost(soc_levels[start_idx], soc_levels[i], L0, buy0, sell0)
+        c = trans_cost(soc_levels[start_idx], soc_levels[i], L0, buy0, sell0, dt0)
         if c is not None:
             dp[i] = c
 
@@ -228,6 +228,7 @@ def dp_optimal(hours, usable, eff, p_max, soc_init_kwh, ref_price, k=200):
         L = hours[times[t]]["net"]
         buy = hours[times[t]]["buy"]
         sell = hours[times[t]]["sell"]
+        dt = hours[times[t]].get("dt", 1.0)
         new_dp = [INF] * k
         for i in range(k):
             s = soc_levels[i]
@@ -235,7 +236,7 @@ def dp_optimal(hours, usable, eff, p_max, soc_init_kwh, ref_price, k=200):
             for j in range(k):
                 if dp[j] == INF:
                     continue
-                c = trans_cost(soc_levels[j], s, L, buy, sell)
+                c = trans_cost(soc_levels[j], s, L, buy, sell, dt)
                 if c is not None:
                     tot = dp[j] + c
                     if tot < best:
@@ -297,6 +298,7 @@ def build_hours(load_w, pv_w, buy_price, sell_price, start=None, end=None):
             "net": a["net_wsum"] / a["dt"],
             "buy": a["buy_wsum"] / a["dt"],
             "sell": a["sell_wsum"] / a["dt"],
+            "dt": a["dt"],
         }
     return hours
 
@@ -320,7 +322,6 @@ def replay_lookahead(hours, usable, eff, p_max, soc_init_kwh, ref_price, win_h=6
     n = len(times)
     if n == 0:
         return 0.0, ""
-    dt = 1.0
     soc = soc_init_kwh
     grid_cost_b2 = 0.0
     counts = {"CHARGE": 0, "DISCHARGE": 0, "IDLE": 0}
@@ -328,6 +329,7 @@ def replay_lookahead(hours, usable, eff, p_max, soc_init_kwh, ref_price, win_h=6
         buy = hours[t]["buy"]
         sell = hours[t]["sell"]
         net_load = hours[t]["net"]
+        dt = hours[t].get("dt", 1.0)
         # Fonster = denna + kommande (win_h-1) timmar (buy-pris som signal).
         window = [hours[times[j]]["buy"] for j in range(i, min(i + win_h, n))]
         lo = min(window)
@@ -526,7 +528,8 @@ def main():
     print(f"  shadow-action-fordelning: {dist}")
 
     # --- Skriv resultat ---------------------------------------------------
-    write_results(cost_a, cost_b, cost_c, len(hours), "ok", dist,
+    covered_hours = sum(v.get("dt", 1.0) for v in hours.values())
+    write_results(cost_a, cost_b, cost_c, covered_hours, "ok", dist,
                   cost_b2=cost_b2, win_h=win_h)
 
 
